@@ -1,0 +1,6 @@
+{
+  "name": "Server Firmware Manager",
+  "description": "Manage, stage, and roll out firmware updates across server clusters with health monitoring and compatibility checks.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
