@@ -138,6 +138,28 @@ export interface Server {
 
 export type SeverityLevel = 'critical' | 'security' | 'recommended' | 'optional';
 
+export interface ComponentDependency {
+  targetComponent: ComponentType | 'Hypervisor';
+  minVersion: string;
+  maxVersion?: string;
+  criticality: 'blocking' | 'required' | 'recommended';
+  description: string;
+}
+
+export interface ComponentDependencyRule {
+  id: string;
+  vendor: ServerVendor | 'ALL';
+  sourceComponent: ComponentType;
+  sourceVersionMin: string;
+  targetComponent: ComponentType | 'Hypervisor';
+  targetMinVersion: string;
+  targetRecommendedVersion?: string;
+  criticality: 'blocking' | 'required' | 'recommended';
+  reason: string;
+  incompatibleConsequence: string;
+  resolutionGuidance: string;
+}
+
 export interface FirmwarePackage {
   id: string;
   name: string;
@@ -154,6 +176,7 @@ export interface FirmwarePackage {
   rebootRequired: boolean;
   vendor: string;
   fileName: string;
+  dependencies?: ComponentDependency[];
 }
 
 export interface UpgradeJobServerProgress {

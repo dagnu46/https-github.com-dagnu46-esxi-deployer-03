@@ -25,9 +25,12 @@ import {
   Sparkles,
   RefreshCw,
   ExternalLink,
-  Table
+  Table,
+  GitBranch,
+  Link2
 } from 'lucide-react';
 import { FirmwarePackage, ComponentType, ServerModel, SeverityLevel, Server } from '../types';
+import { FirmwareDependencyVisualizer } from './FirmwareDependencyVisualizer';
 
 interface FirmwareCatalogProps {
   packages: FirmwarePackage[];
@@ -58,8 +61,8 @@ export const FirmwareCatalog: React.FC<FirmwareCatalogProps> = ({
   onDeployPackage,
   onQuickUpgradeServer,
 }) => {
-  // View mode: repository package cards vs fleet matrix cross-reference
-  const [viewMode, setViewMode] = useState<'packages' | 'matrix'>('packages');
+  // View mode: repository package cards vs fleet matrix cross-reference vs component dependencies
+  const [viewMode, setViewMode] = useState<'packages' | 'matrix' | 'dependencies'>('packages');
 
   const [selectedComponentFilter, setSelectedComponentFilter] = useState<string>('all');
   const [modelFilter, setModelFilter] = useState<string>('all');
@@ -352,6 +355,19 @@ export const FirmwareCatalog: React.FC<FirmwareCatalogProps> = ({
               <Table className="w-3.5 h-3.5" />
               <span>Fleet Version Matrix</span>
             </button>
+            <button
+              type="button"
+              id="tab-view-dependencies"
+              onClick={() => setViewMode('dependencies')}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors flex items-center gap-1.5 ${
+                viewMode === 'dependencies'
+                  ? 'bg-white text-indigo-700 shadow-xs'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Layers className="w-3.5 h-3.5 text-indigo-600" />
+              <span>Dependencies & Incompatibilities</span>
+            </button>
           </div>
 
           <button
@@ -518,6 +534,43 @@ export const FirmwareCatalog: React.FC<FirmwareCatalogProps> = ({
                           ))}
                         </div>
                       </div>
+
+                      {/* Dependencies & Upgrade Guard */}
+                      {(pkg.minPrerequisiteVersion || (pkg.dependencies && pkg.dependencies.length > 0)) && (
+                        <div className="mt-3 p-2.5 bg-amber-50/80 border border-amber-200 rounded-lg text-xs space-y-1">
+                          <div className="flex items-center justify-between text-amber-900 font-semibold text-[11px]">
+                            <span className="flex items-center gap-1">
+                              <Link2 className="w-3.5 h-3.5 text-amber-600" />
+                              Upgrade Prerequisites Required:
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => setViewMode('dependencies')}
+                              className="text-indigo-600 hover:text-indigo-800 underline font-medium text-[11px] flex items-center gap-0.5"
+                            >
+                              <span>Inspect Graph</span>
+                              <GitBranch className="w-3 h-3" />
+                            </button>
+                          </div>
+                          {pkg.minPrerequisiteVersion && (
+                            <div className="text-[11px] text-amber-800 flex items-center gap-1">
+                              <span className="font-medium">Stepping requirement:</span>
+                              <span className="font-mono font-bold bg-amber-100 px-1 rounded text-amber-900">
+                                {pkg.component} ≥ {pkg.minPrerequisiteVersion}
+                              </span>
+                            </div>
+                          )}
+                          {pkg.dependencies && pkg.dependencies.map((dep, dIdx) => (
+                            <div key={dIdx} className="text-[11px] text-amber-800 flex items-center gap-1">
+                              <span className="font-medium">Cross-component requirement:</span>
+                              <span className="font-mono font-bold bg-amber-100 px-1 rounded text-amber-900">
+                                {dep.targetComponent} ≥ {dep.minVersion}
+                              </span>
+                              <span className="text-amber-700 text-[10px]">({dep.criticality})</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
 
                       {/* Installed in Inventory Fleet Metric & Drawer */}
                       <div className="mt-4 pt-3 border-t border-slate-100">
@@ -800,6 +853,15 @@ export const FirmwareCatalog: React.FC<FirmwareCatalogProps> = ({
             </table>
           </div>
         </div>
+      )}
+
+      {/* VIEW MODE 3: Component Dependencies & Incompatibility Visualization */}
+      {viewMode === 'dependencies' && (
+        <FirmwareDependencyVisualizer
+          packages={packages}
+          servers={servers}
+          onDeployPackage={onDeployPackage}
+        />
       )}
 
       {/* Upload & Define Firmware Modal */}

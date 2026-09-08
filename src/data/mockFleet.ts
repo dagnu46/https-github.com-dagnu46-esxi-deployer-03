@@ -11,6 +11,14 @@ export const INITIAL_FIRMWARE_PACKAGES: FirmwarePackage[] = [
     severity: 'critical',
     supportedModels: ['Dell PowerEdge R750', 'Dell PowerEdge R650', 'Dell PowerEdge R740xd'],
     minPrerequisiteVersion: '2.14.0',
+    dependencies: [
+      {
+        targetComponent: 'BMC',
+        minVersion: '6.10.30.00',
+        criticality: 'blocking',
+        description: 'Requires iDRAC9 6.10.30.00+ for SMM Redfish API communication protocols'
+      }
+    ],
     fileSizeMb: 86.4,
     sha256: '9f82c4e207bda938e5d14ff38a8e7e17812cd80145c1df779f291e012fa4b802',
     cves: ['CVE-2026-21340', 'CVE-2026-21341'],
@@ -62,6 +70,14 @@ export const INITIAL_FIRMWARE_PACKAGES: FirmwarePackage[] = [
     severity: 'critical',
     supportedModels: ['HPE ProLiant DL380 Gen10', 'HPE ProLiant DL360 Gen10', 'HPE ProLiant DL380 Gen11'],
     minPrerequisiteVersion: '2.60',
+    dependencies: [
+      {
+        targetComponent: 'BMC',
+        minVersion: '2.90',
+        criticality: 'blocking',
+        description: 'Requires HPE iLO 5 2.90+ for Silicon Root of Trust TPM key verification'
+      }
+    ],
     fileSizeMb: 32.1,
     sha256: '8b7d41f09c2a39df88147d398f6570cbe88231904a259c47190d65b1239aa804',
     cves: ['CVE-2026-22419'],
@@ -113,6 +129,14 @@ export const INITIAL_FIRMWARE_PACKAGES: FirmwarePackage[] = [
     severity: 'critical',
     supportedModels: ['Lenovo ThinkSystem SR650 V2', 'Lenovo ThinkSystem SR630 V2', 'Lenovo ThinkSystem SR650 V3'],
     minPrerequisiteVersion: '2.80',
+    dependencies: [
+      {
+        targetComponent: 'BMC',
+        minVersion: '4.20',
+        criticality: 'blocking',
+        description: 'Requires Lenovo XCC 4.20+ for secure UEFI payload validation'
+      }
+    ],
     fileSizeMb: 45.2,
     sha256: '7281903847019283740192837401928374019283740192837401928374019283',
     cves: ['CVE-2026-21340', 'CVE-2026-22419'],
@@ -177,6 +201,14 @@ export const INITIAL_FIRMWARE_PACKAGES: FirmwarePackage[] = [
     sha256: 'ec01928374fa901bc09124801294801948102498102948012489012481029481',
     cves: [],
     releaseNotes: 'Resolves RoCEv2 flow control pause frame deadlock under 100GbE burst line rates. Enhanced SR-IOV virtual function allocation speeds for VMware vMotion and XenMotion live migrations.',
+    dependencies: [
+      {
+        targetComponent: 'BIOS',
+        minVersion: '2.18.0',
+        criticality: 'blocking',
+        description: 'Requires host UEFI BIOS 2.18.0+ for PCIe Gen4 bifurcation and Secure Boot Option ROM dispatch'
+      }
+    ],
     rebootRequired: true,
     vendor: 'NVIDIA Networking',
     fileName: 'fw-ConnectX6Dx-rel-22_39_1002.bin',
