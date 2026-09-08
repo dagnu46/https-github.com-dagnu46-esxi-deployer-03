@@ -1,6 +1,21 @@
 -- Server Firmware Manager PostgreSQL Initialization Schema
 -- This script runs automatically when the PostgreSQL container is first created
 
+-- Ensure role 'Dagnu' exists with superuser and login privileges
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'Dagnu') THEN
+    CREATE ROLE "Dagnu" WITH LOGIN SUPERUSER PASSWORD 'Dagnu0046!';
+  ELSE
+    ALTER ROLE "Dagnu" WITH LOGIN SUPERUSER PASSWORD 'Dagnu0046!';
+  END IF;
+END
+$$;
+
+-- Grant database permissions
+GRANT ALL PRIVILEGES ON DATABASE firmware_hub TO "Dagnu";
+ALTER DATABASE firmware_hub OWNER TO "Dagnu";
+
 CREATE TABLE IF NOT EXISTS servers (
   id VARCHAR(100) PRIMARY KEY,
   hostname VARCHAR(255) NOT NULL,
@@ -102,3 +117,9 @@ CREATE INDEX IF NOT EXISTS idx_servers_status ON servers(status);
 CREATE INDEX IF NOT EXISTS idx_firmware_component ON firmware_packages(component);
 CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON audit_records(timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_campaigns_status ON campaigns(status);
+
+-- Grant privileges on all tables and sequences to user Dagnu
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO "Dagnu";
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO "Dagnu";
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO "Dagnu";
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO "Dagnu";

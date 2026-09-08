@@ -9,9 +9,10 @@ services:
     container_name: firmware-hub-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      POSTGRES_USER: Dagnu
+      POSTGRES_PASSWORD: 'Dagnu0046!'
       POSTGRES_DB: firmware_hub
+      POSTGRES_HOST_AUTH_METHOD: trust
       PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
       - postgres_data:/var/lib/postgresql/data
@@ -19,7 +20,7 @@ services:
     ports:
       - "5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d firmware_hub"]
+      test: ["CMD-SHELL", "pg_isready -U Dagnu -d firmware_hub"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -37,7 +38,12 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=3000
-      - DATABASE_URL=postgres://postgres:postgres@postgres:5432/firmware_hub
+      - DATABASE_URL=postgres://Dagnu:Dagnu0046%21@postgres:5432/firmware_hub
+      - PGUSER=Dagnu
+      - PGPASSWORD=Dagnu0046!
+      - PGHOST=postgres
+      - PGPORT=5432
+      - PGDATABASE=firmware_hub
     ports:
       - "3000:3000"
     depends_on:

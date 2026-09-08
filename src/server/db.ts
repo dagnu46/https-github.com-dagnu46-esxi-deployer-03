@@ -12,16 +12,17 @@ let lastPingTime = 0;
 let lastLatencyMs: number | null = null;
 
 export function getDatabaseConfig(): { connectionString?: string; config: PoolConfig } {
-  const connectionString = process.env.DATABASE_URL || 
-    (process.env.PGHOST 
-      ? `postgres://${process.env.PGUSER || 'postgres'}:${encodeURIComponent(process.env.PGPASSWORD || 'postgres')}@${process.env.PGHOST}:${process.env.PGPORT || 5432}/${process.env.PGDATABASE || 'firmware_hub'}`
-      : undefined);
+  const user = process.env.PGUSER || 'Dagnu';
+  const password = process.env.PGPASSWORD || 'Dagnu0046!';
+  const host = process.env.PGHOST || 'localhost';
+  const port = parseInt(process.env.PGPORT || '5432', 10);
+  const database = process.env.PGDATABASE || 'firmware_hub';
 
-  if (connectionString) {
+  if (process.env.DATABASE_URL) {
     return {
-      connectionString,
+      connectionString: process.env.DATABASE_URL,
       config: {
-        connectionString,
+        connectionString: process.env.DATABASE_URL,
         connectionTimeoutMillis: 3000,
         idleTimeoutMillis: 10000,
         max: 10,
@@ -29,12 +30,16 @@ export function getDatabaseConfig(): { connectionString?: string; config: PoolCo
     };
   }
 
-  // Default fallback local postgres
-  const defaultUrl = 'postgres://postgres:postgres@localhost:5432/firmware_hub';
+  // Construct connection URL with encoded password for safety
+  const defaultUrl = `postgres://${user}:${encodeURIComponent(password)}@${host}:${port}/${database}`;
   return {
     connectionString: defaultUrl,
     config: {
-      connectionString: defaultUrl,
+      user,
+      password,
+      host,
+      port,
+      database,
       connectionTimeoutMillis: 2000,
       idleTimeoutMillis: 10000,
       max: 10,
