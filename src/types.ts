@@ -1,11 +1,34 @@
+export type ServerVendor = 'HP' | 'DELL' | 'LENOVO';
+
+export type HypervisorType = 'VMware ESXi' | 'VMware ESXi on Nutanix' | 'Xen Server';
+
 export type ServerModel = 
+  // HP / HPE
+  | 'HPE ProLiant DL380 Gen10'
+  | 'HPE ProLiant DL380 Gen11'
+  | 'HPE ProLiant DL360 Gen10'
+  | 'HPE Synergy 480 Gen10'
+  // DELL
   | 'Dell PowerEdge R750'
   | 'Dell PowerEdge R650'
-  | 'HPE ProLiant DL380 Gen10'
-  | 'HPE ProLiant DL360 Gen10'
-  | 'Supermicro Hyper SuperServer'
+  | 'Dell PowerEdge R740xd'
+  | 'Dell PowerEdge MX750c'
+  // LENOVO
   | 'Lenovo ThinkSystem SR650 V2'
-  | 'Cisco UCS C240 M6';
+  | 'Lenovo ThinkSystem SR630 V2'
+  | 'Lenovo ThinkSystem SR650 V3'
+  | 'Lenovo ThinkSystem SR670 V2'
+  | string;
+
+export type BmcAffectedType = 
+  | 'iDRAC9' 
+  | 'iDRAC8' 
+  | 'iLO 5' 
+  | 'iLO 6' 
+  | 'Lenovo XClarity' 
+  | 'Lenovo XCC2' 
+  | 'Supermicro IPMI' 
+  | 'Cisco IMC';
 
 export type ComponentType = 'BIOS' | 'BMC' | 'NIC' | 'RAID' | 'NVMe';
 
@@ -40,22 +63,74 @@ export interface ComponentFirmware {
   rebootRequired: boolean;
 }
 
+export type BmcProtocol = 'redfish' | 'ipmi' | 'https';
+
+export interface ServerCredentials {
+  bmcUsername: string;
+  bmcPassword?: string;
+  bmcProtocol: BmcProtocol;
+  bmcPort: number;
+  ignoreSslErrors: boolean;
+  enableSsh?: boolean;
+  sshPort?: number;
+  sshUsername?: string;
+  sshAuthType?: 'password' | 'key';
+  sshPassword?: string;
+  sshKey?: string;
+}
+
+export interface AccessTestStep {
+  id: string;
+  name: string;
+  status: 'pending' | 'running' | 'success' | 'failed' | 'skipped';
+  message: string;
+  latencyMs?: number;
+  details?: string;
+}
+
+export interface AccessTestResult {
+  status: 'untested' | 'testing' | 'success' | 'failed' | 'partial';
+  testedAt?: string;
+  testedBy?: string;
+  summary: string;
+  latencyMs?: number;
+  steps: AccessTestStep[];
+  discoveredHardware?: {
+    model?: string;
+    serialNumber?: string;
+    powerState?: 'on' | 'off';
+    bmcVersionDetected?: string;
+    biosVersionDetected?: string;
+    chassisHealth?: 'OK' | 'Warning' | 'Critical';
+    macAddress?: string;
+    redfishVersion?: string;
+  };
+  errorDetails?: string;
+}
+
 export interface Server {
   id: string;
   hostname: string;
+  vendor: ServerVendor;
+  hypervisor: HypervisorType;
+  hypervisorVersion?: string;
+  hypervisorMaintenanceMode?: boolean;
+  activeVmsCount?: number;
   cluster: string;
   datacenter: string;
   rack: string;
   unit: string;
   ip: string;
   bmcIp: string;
-  bmcAffectedType: 'iDRAC9' | 'iLO 5' | 'Supermicro IPMI' | 'Lenovo XClarity' | 'Cisco IMC';
+  bmcAffectedType: BmcAffectedType;
   model: ServerModel;
   architecture: 'x86_64' | 'aarch64';
   status: ServerStatus;
   powerState: 'on' | 'off' | 'rebooting';
   powerSupplyRedundancy: boolean;
   components: Record<ComponentType, ComponentFirmware>;
+  credentials?: ServerCredentials;
+  accessStatus?: AccessTestResult;
   lastUpgradeDate?: string;
   tags: string[];
   notes?: string;

@@ -136,7 +136,10 @@ export const ServerList: React.FC<ServerListProps> = ({
                 />
               </th>
               <th scope="col" className="px-4 py-3 text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
-                Device & Hardware Model
+                Device & Vendor
+              </th>
+              <th scope="col" className="px-4 py-3 text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
+                Hypervisor & Workload
               </th>
               <th scope="col" className="px-4 py-3 text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
                 IP Address & BMC (OOB)
@@ -163,6 +166,16 @@ export const ServerList: React.FC<ServerListProps> = ({
               const hasCritical = componentList.some(c => c.status === 'critical_update');
               const hasAnyUpdate = componentList.some(c => c.status !== 'up_to_date');
 
+              const vendor = server.vendor || (
+                server.model?.includes('HPE') || server.model?.includes('HP') ? 'HP' :
+                server.model?.includes('Dell') ? 'DELL' : 'LENOVO'
+              );
+
+              const hypervisor = server.hypervisor || (
+                server.cluster?.includes('Nutanix') ? 'VMware ESXi on Nutanix' :
+                server.cluster?.includes('Xen') ? 'Xen Server' : 'VMware ESXi'
+              );
+
               return (
                 <tr
                   key={server.id}
@@ -185,7 +198,7 @@ export const ServerList: React.FC<ServerListProps> = ({
                     />
                   </td>
 
-                  {/* Server & Model */}
+                  {/* Server, Vendor & Model */}
                   <td className="px-4 py-3.5">
                     <div className="flex items-center space-x-2">
                       <span className="font-mono font-bold text-slate-900 text-xs">
@@ -199,10 +212,60 @@ export const ServerList: React.FC<ServerListProps> = ({
                         {server.status}
                       </span>
                     </div>
-                    <div className="text-slate-500 text-[11px] mt-0.5 flex items-center gap-1">
-                      <span>{server.model}</span>
-                      <span>•</span>
-                      <span className="truncate max-w-[150px]">{server.cluster}</span>
+                    <div className="text-slate-500 text-[11px] mt-1 flex items-center gap-1.5 flex-wrap">
+                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold tracking-wider ${
+                        vendor === 'HP' ? 'bg-emerald-100 text-emerald-900 border border-emerald-200' :
+                        vendor === 'DELL' ? 'bg-blue-100 text-blue-900 border border-blue-200' :
+                        'bg-red-100 text-red-900 border border-red-200'
+                      }`}>
+                        {vendor}
+                      </span>
+                      <span className="font-medium text-slate-700">{server.model}</span>
+                      <span className="text-slate-300">•</span>
+                      <span className="truncate max-w-[140px] text-slate-500">{server.cluster}</span>
+                    </div>
+                  </td>
+
+                  {/* Hypervisor & Virtualization Workload */}
+                  <td className="px-4 py-3.5">
+                    <div className="flex flex-col gap-1">
+                      <div>
+                        {hypervisor === 'VMware ESXi' && (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700 border border-indigo-200 text-[10px] font-semibold">
+                            <span className="w-1.5 h-1.5 rounded-full bg-indigo-600" />
+                            <span>VMware ESXi</span>
+                          </span>
+                        )}
+                        {hypervisor === 'VMware ESXi on Nutanix' && (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-teal-50 text-teal-800 border border-teal-200 text-[10px] font-semibold">
+                            <span className="w-1.5 h-1.5 rounded-full bg-teal-600" />
+                            <span>ESXi on Nutanix</span>
+                          </span>
+                        )}
+                        {hypervisor === 'Xen Server' && (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-50 text-amber-800 border border-amber-200 text-[10px] font-semibold">
+                            <span className="w-1.5 h-1.5 rounded-full bg-amber-600" />
+                            <span>Xen Server</span>
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-[10px] text-slate-500 font-mono truncate max-w-[170px]" title={server.hypervisorVersion || 'Base Hypervisor'}>
+                        {server.hypervisorVersion || 'ESXi 8.0u2'}
+                      </div>
+                      <div>
+                        {server.hypervisorMaintenanceMode ? (
+                          <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded-sm bg-amber-100 text-amber-800 text-[9px] font-semibold">
+                            <span className="w-1.5 h-1.5 rounded-full bg-amber-600" />
+                            <span>Maintenance (Evacuated)</span>
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-[10px] text-slate-600 font-medium">
+                            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                            <span className="font-mono font-semibold text-slate-800">{server.activeVmsCount ?? 0}</span>
+                            <span>active VMs</span>
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </td>
 
@@ -215,6 +278,33 @@ export const ServerList: React.FC<ServerListProps> = ({
                     <div className="text-slate-500 flex items-center gap-1 mt-0.5">
                       <span className="text-slate-400 font-sans text-[10px]">{server.bmcAffectedType}:</span>
                       <span>{server.bmcIp}</span>
+                    </div>
+                    <div className="mt-1 flex items-center gap-1.5">
+                      {server.accessStatus?.status === 'success' ? (
+                        <span 
+                          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm bg-emerald-50 text-emerald-700 border border-emerald-200 text-[9px] font-sans font-medium"
+                          title={`Access verified via ${server.credentials?.bmcProtocol?.toUpperCase() || 'Redfish'} (${server.accessStatus.latencyMs || 16}ms RTT). Username: ${server.credentials?.bmcUsername || 'root'}`}
+                        >
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                          <span>{server.credentials?.bmcProtocol?.toUpperCase() || 'Redfish'} ({server.accessStatus.latencyMs || 16}ms)</span>
+                        </span>
+                      ) : server.accessStatus?.status === 'failed' ? (
+                        <span 
+                          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm bg-red-50 text-red-700 border border-red-200 text-[9px] font-sans font-medium"
+                          title={server.accessStatus?.summary || 'Authentication or network probe failed'}
+                        >
+                          <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
+                          <span>Auth Failed</span>
+                        </span>
+                      ) : (
+                        <span 
+                          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-sm bg-slate-100 text-slate-600 border border-slate-200 text-[9px] font-sans font-medium"
+                          title="Credentials pending verification"
+                        >
+                          <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
+                          <span>Unverified</span>
+                        </span>
+                      )}
                     </div>
                   </td>
 

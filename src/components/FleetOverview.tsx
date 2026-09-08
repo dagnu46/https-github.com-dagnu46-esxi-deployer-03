@@ -19,6 +19,10 @@ interface FleetOverviewProps {
   onStatusFilterChange: (f: string) => void;
   clusterFilter: string;
   onClusterFilterChange: (c: string) => void;
+  vendorFilter: string;
+  onVendorFilterChange: (v: string) => void;
+  hypervisorFilter: string;
+  onHypervisorFilterChange: (h: string) => void;
   selectedServerIds: string[];
   onClearSelection: () => void;
   onUpgradeSelected: () => void;
@@ -33,12 +37,28 @@ export const FleetOverview: React.FC<FleetOverviewProps> = ({
   onStatusFilterChange,
   clusterFilter,
   onClusterFilterChange,
+  vendorFilter,
+  onVendorFilterChange,
+  hypervisorFilter,
+  onHypervisorFilterChange,
   selectedServerIds,
   onClearSelection,
   onUpgradeSelected,
 }) => {
   // Compute analytics
   const totalServers = servers.length;
+
+  // Vendor analytics
+  const hpCount = servers.filter(s => s.vendor === 'HP' || s.model?.includes('HPE') || s.model?.includes('HP')).length;
+  const dellCount = servers.filter(s => s.vendor === 'DELL' || s.model?.includes('Dell')).length;
+  const lenovoCount = servers.filter(s => s.vendor === 'LENOVO' || s.model?.includes('Lenovo')).length;
+
+  // Hypervisor analytics
+  const esxiCount = servers.filter(s => s.hypervisor === 'VMware ESXi').length;
+  const nutanixCount = servers.filter(s => s.hypervisor === 'VMware ESXi on Nutanix').length;
+  const xenCount = servers.filter(s => s.hypervisor === 'Xen Server').length;
+  const totalActiveVms = servers.reduce((acc, s) => acc + (s.activeVmsCount || 0), 0);
+  const inMaintenanceCount = servers.filter(s => s.hypervisorMaintenanceMode || s.status === 'maintenance').length;
   
   // A server is critical if any component has 'critical_update'
   const criticalServers = servers.filter(s => 
@@ -214,6 +234,36 @@ export const FleetOverview: React.FC<FleetOverviewProps> = ({
               </button>
             </div>
 
+            {/* Vendor dropdown */}
+            <div className="relative">
+              <select
+                id="select-vendor-filter"
+                value={vendorFilter}
+                onChange={e => onVendorFilterChange(e.target.value)}
+                className="pl-2.5 pr-7 py-1.5 text-xs text-slate-700 bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-indigo-500 font-medium cursor-pointer"
+              >
+                <option value="all">All Vendors (HP, Dell, Lenovo)</option>
+                <option value="HP">HP Enterprise ({hpCount})</option>
+                <option value="DELL">DELL PowerEdge ({dellCount})</option>
+                <option value="LENOVO">LENOVO ThinkSystem ({lenovoCount})</option>
+              </select>
+            </div>
+
+            {/* Hypervisor dropdown */}
+            <div className="relative">
+              <select
+                id="select-hypervisor-filter"
+                value={hypervisorFilter}
+                onChange={e => onHypervisorFilterChange(e.target.value)}
+                className="pl-2.5 pr-7 py-1.5 text-xs text-slate-700 bg-slate-50 border border-slate-200 rounded-lg focus:outline-hidden focus:ring-2 focus:ring-indigo-500 font-medium cursor-pointer"
+              >
+                <option value="all">All Hypervisors</option>
+                <option value="VMware ESXi">VMware ESXi ({esxiCount})</option>
+                <option value="VMware ESXi on Nutanix">VMware ESXi on Nutanix ({nutanixCount})</option>
+                <option value="Xen Server">Xen Server ({xenCount})</option>
+              </select>
+            </div>
+
             {/* Cluster dropdown */}
             <div className="relative">
               <select
@@ -230,6 +280,95 @@ export const FleetOverview: React.FC<FleetOverviewProps> = ({
                 ))}
               </select>
             </div>
+          </div>
+        </div>
+
+        {/* Hypervisor & Hardware Inventory Quick Badge Bar */}
+        <div className="mt-2.5 pt-2.5 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2 text-[11px]">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-slate-400 font-medium">Hardware:</span>
+            <button
+              type="button"
+              onClick={() => onVendorFilterChange(vendorFilter === 'HP' ? 'all' : 'HP')}
+              className={`px-2 py-0.5 rounded-md font-semibold transition-colors flex items-center gap-1 cursor-pointer ${
+                vendorFilter === 'HP'
+                  ? 'bg-emerald-600 text-white'
+                  : 'bg-emerald-50 text-emerald-800 border border-emerald-200 hover:bg-emerald-100'
+              }`}
+            >
+              <span>HP:</span>
+              <span className="font-mono">{hpCount}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => onVendorFilterChange(vendorFilter === 'DELL' ? 'all' : 'DELL')}
+              className={`px-2 py-0.5 rounded-md font-semibold transition-colors flex items-center gap-1 cursor-pointer ${
+                vendorFilter === 'DELL'
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-blue-50 text-blue-800 border border-blue-200 hover:bg-blue-100'
+              }`}
+            >
+              <span>DELL:</span>
+              <span className="font-mono">{dellCount}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => onVendorFilterChange(vendorFilter === 'LENOVO' ? 'all' : 'LENOVO')}
+              className={`px-2 py-0.5 rounded-md font-semibold transition-colors flex items-center gap-1 cursor-pointer ${
+                vendorFilter === 'LENOVO'
+                  ? 'bg-red-600 text-white'
+                  : 'bg-red-50 text-red-800 border border-red-200 hover:bg-red-100'
+              }`}
+            >
+              <span>LENOVO:</span>
+              <span className="font-mono">{lenovoCount}</span>
+            </button>
+
+            <span className="text-slate-300 mx-1">|</span>
+
+            <span className="text-slate-400 font-medium">Virtualization:</span>
+            <button
+              type="button"
+              onClick={() => onHypervisorFilterChange(hypervisorFilter === 'VMware ESXi' ? 'all' : 'VMware ESXi')}
+              className={`px-2 py-0.5 rounded-md font-semibold transition-colors flex items-center gap-1 cursor-pointer ${
+                hypervisorFilter === 'VMware ESXi'
+                  ? 'bg-indigo-600 text-white'
+                  : 'bg-indigo-50 text-indigo-800 border border-indigo-200 hover:bg-indigo-100'
+              }`}
+            >
+              <span>VMware ESXi:</span>
+              <span className="font-mono">{esxiCount}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => onHypervisorFilterChange(hypervisorFilter === 'VMware ESXi on Nutanix' ? 'all' : 'VMware ESXi on Nutanix')}
+              className={`px-2 py-0.5 rounded-md font-semibold transition-colors flex items-center gap-1 cursor-pointer ${
+                hypervisorFilter === 'VMware ESXi on Nutanix'
+                  ? 'bg-teal-600 text-white'
+                  : 'bg-teal-50 text-teal-800 border border-teal-200 hover:bg-teal-100'
+              }`}
+            >
+              <span>ESXi on Nutanix:</span>
+              <span className="font-mono">{nutanixCount}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => onHypervisorFilterChange(hypervisorFilter === 'Xen Server' ? 'all' : 'Xen Server')}
+              className={`px-2 py-0.5 rounded-md font-semibold transition-colors flex items-center gap-1 cursor-pointer ${
+                hypervisorFilter === 'Xen Server'
+                  ? 'bg-amber-600 text-white'
+                  : 'bg-amber-50 text-amber-800 border border-amber-200 hover:bg-amber-100'
+              }`}
+            >
+              <span>Xen Server:</span>
+              <span className="font-mono">{xenCount}</span>
+            </button>
+          </div>
+
+          <div className="flex items-center gap-3 text-slate-500 font-mono text-[11px]">
+            <span>Active Guest VMs: <strong className="text-slate-800 font-semibold">{totalActiveVms}</strong></span>
+            <span>•</span>
+            <span>Maintenance/Evacuated: <strong className="text-slate-800 font-semibold">{inMaintenanceCount}</strong></span>
           </div>
         </div>
 

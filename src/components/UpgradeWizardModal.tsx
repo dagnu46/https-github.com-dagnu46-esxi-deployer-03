@@ -227,10 +227,32 @@ export const UpgradeWizardModal: React.FC<UpgradeWizardModalProps> = ({
                         <div>
                           <div className="flex items-center space-x-2">
                             <span className="font-bold text-slate-900 font-mono">{server.hostname}</span>
+                            <span className={`px-1.5 py-0.2 rounded text-[9px] font-bold ${
+                              (server.vendor || (server.model?.includes('Dell') ? 'DELL' : server.model?.includes('Lenovo') ? 'LENOVO' : 'HP')) === 'HP' ? 'bg-emerald-100 text-emerald-800' :
+                              (server.vendor || (server.model?.includes('Dell') ? 'DELL' : server.model?.includes('Lenovo') ? 'LENOVO' : 'HP')) === 'DELL' ? 'bg-blue-100 text-blue-800' :
+                              'bg-red-100 text-red-800'
+                            }`}>
+                              {server.vendor || (server.model?.includes('Dell') ? 'DELL' : server.model?.includes('Lenovo') ? 'LENOVO' : 'HP')}
+                            </span>
                             <span className="text-[11px] text-slate-500">{server.model}</span>
+                            {server.hypervisorMaintenanceMode ? (
+                              <span className="px-1.5 py-0.2 rounded bg-emerald-100 text-emerald-800 text-[9px] font-semibold">
+                                Evacuated (Safe)
+                              </span>
+                            ) : (server.activeVmsCount || 0) > 0 ? (
+                              <span className="px-1.5 py-0.2 rounded bg-amber-100 text-amber-800 text-[9px] font-medium">
+                                {server.activeVmsCount} VMs Running
+                              </span>
+                            ) : null}
                           </div>
-                          <div className="text-[11px] text-slate-500 font-mono">
-                            {server.datacenter} • {server.rack} • BMC: {server.bmcIp}
+                          <div className="text-[11px] text-slate-500 font-mono flex items-center gap-1.5 mt-0.5">
+                            <span className="text-indigo-600 font-medium">
+                              {server.hypervisor || 'VMware ESXi'}
+                            </span>
+                            <span>•</span>
+                            <span>{server.datacenter} ({server.rack})</span>
+                            <span>•</span>
+                            <span>BMC: {server.bmcIp}</span>
                           </div>
                         </div>
                       </div>

@@ -10,6 +10,7 @@ import { ServerDetailModal } from './components/ServerDetailModal';
 import { UpgradeWizardModal } from './components/UpgradeWizardModal';
 import { DeviceModal } from './components/DeviceModal';
 import { DeleteConfirmModal } from './components/DeleteConfirmModal';
+import { DockerDbModal } from './components/DockerDbModal';
 
 import { 
   Server, 
@@ -36,6 +37,24 @@ import {
   resetToDemoFleet 
 } from './utils/storage';
 
+import {
+  getDbStatus,
+  DatabaseStatus,
+  reseedDb,
+  syncLoadServers,
+  syncSaveServer,
+  syncDeleteServer,
+  syncLoadPackages,
+  syncSavePackage,
+  syncDeletePackage,
+  syncLoadAuditLogs,
+  syncSaveAuditLog,
+  syncLoadBaseline,
+  syncSaveBaseline,
+  syncLoadCampaign,
+  syncSaveCampaign
+} from './services/api';
+
 import { createCampaign } from './utils/orchestrator';
 import { Plus, CheckCircle2, AlertTriangle, ShieldCheck } from 'lucide-react';
 
@@ -47,6 +66,10 @@ export default function App() {
   const [baseline, setBaseline] = useState<BaselineConfig>(() => loadBaseline());
   const [activeCampaign, setActiveCampaign] = useState<UpgradeCampaign | null>(() => loadActiveCampaign());
 
+  // PostgreSQL Database & Docker State
+  const [dbStatus, setDbStatus] = useState<DatabaseStatus | null>(null);
+  const [isDockerDbModalOpen, setIsDockerDbModalOpen] = useState(false);
+
   // Navigation
   const [activeTab, setActiveTab] = useState<NavTab>('fleet');
 
@@ -54,6 +77,8 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [clusterFilter, setClusterFilter] = useState('all');
+  const [vendorFilter, setVendorFilter] = useState('all');
+  const [hypervisorFilter, setHypervisorFilter] = useState('all');
   const [selectedServerIds, setSelectedServerIds] = useState<string[]>([]);
 
   // Modals
@@ -76,6 +101,41 @@ export default function App() {
       setToastMessage(null);
     }, 4500);
   };
+
+  // Connect to backend PostgreSQL database on boot and load fleet data
+  const refreshDbStatus = async () => {
+    const status = await getDbStatus();
+    setDbStatus(status);
+    return status;
+  };
+
+  useEffect(() => {
+    const initDatabaseFleet = async () => {
+      const status = await refreshDbStatus();
+      if (status.connected) {
+        try {
+          const [sRes, pRes, aRes, bRes, cRes] = await Promise.all([
+            syncLoadServers(),
+            syncLoadPackages(),
+            syncLoadAuditLogs(),
+            syncLoadBaseline(),
+            syncLoadCampaign(),
+          ]);
+          if (sRes.source === 'postgres' && sRes.servers.length > 0) setServers(sRes.servers);
+          if (pRes.source === 'postgres' && pRes.packages.length > 0) setPackages(pRes.packages);
+          if (aRes.source === 'postgres' && aRes.logs.length > 0) setAuditLogs(aRes.logs);
+          if (bRes.source === 'postgres' && bRes.baseline) setBaseline(bRes.baseline);
+          if (cRes.source === 'postgres' && cRes.campaign) setActiveCampaign(cRes.campaign);
+        } catch (e) {
+          console.warn('[PostgreSQL] Initial sync error:', e);
+        }
+      }
+    };
+
+    initDatabaseFleet();
+    const interval = setInterval(refreshDbStatus, 20000);
+    return () => clearInterval(interval);
+  }, []);
 
   // Sync datasets to localStorage when changed
   useEffect(() => {
@@ -348,7 +408,7 @@ export default function App() {
   };
 
   // Demo fleet reset
-  const handleResetDemo = () => {
+  const handleResetDemo = async () => {
     const demo = resetToDemoFleet();
     setServers(demo.servers);
     setPackages(demo.packages);
@@ -357,6 +417,10 @@ export default function App() {
     setActiveCampaign(null);
     setSelectedServerIds([]);
     showToast('Fleet inventory reset to initial demo configuration.', 'info');
+    if (dbStatus?.connected) {
+      await reseedDb();
+      refreshDbStatus();
+    }
   };
 
   // Quick upgrade from server list
@@ -410,12 +474,13 @@ export default function App() {
 
   // Add or edit server in inventory
   const handleSaveServer = (serverData: Server) => {
+    syncSaveServer(serverData);
     if (editingServer) {
       setServers(prev => prev.map(s => s.id === serverData.id ? serverData : s));
       if (inspectedServer && inspectedServer.id === serverData.id) {
         setInspectedServer(serverData);
       }
-      showToast(`Device "${serverData.hostname}" inventory record updated!`, 'success');
+      showToast(`Device "${serverData.hostname}" inventory record saved to database!`, 'success');
     } else {
       setServers(prev => [serverData, ...prev]);
       showToast(`Device "${serverData.hostname}" registered into inventory!`, 'success');
@@ -427,16 +492,18 @@ export default function App() {
   // Decommission and delete device
   const handleDeleteServer = (serverId: string) => {
     const target = servers.find(s => s.id === serverId);
+    syncDeleteServer(serverId);
     setServers(prev => prev.filter(s => s.id !== serverId));
     setSelectedServerIds(prev => prev.filter(id => id !== serverId));
     if (inspectedServer && inspectedServer.id === serverId) {
       setInspectedServer(null);
     }
-    showToast(`Device "${target?.hostname || serverId}" decommissioned and deleted from inventory.`, 'warn');
+    showToast(`Device "${target?.hostname || serverId}" decommissioned and deleted from database.`, 'warn');
   };
 
   // Update firmware package
   const handleUpdatePackage = (updatedPkg: FirmwarePackage) => {
+    syncSavePackage(updatedPkg);
     setPackages(prev => prev.map(p => p.id === updatedPkg.id ? updatedPkg : p));
     showToast(`Firmware package "${updatedPkg.name}" updated!`, 'success');
   };
@@ -444,6 +511,7 @@ export default function App() {
   // Delete firmware package
   const handleDeletePackage = (pkgId: string) => {
     const target = packages.find(p => p.id === pkgId);
+    syncDeletePackage(pkgId);
     setPackages(prev => prev.filter(p => p.id !== pkgId));
     showToast(`Firmware package "${target?.name || pkgId}" removed from repository.`, 'warn');
   };
@@ -453,7 +521,9 @@ export default function App() {
     setServers(prev =>
       prev.map(s => {
         if (s.id === serverId) {
-          return { ...s, status: newStatus };
+          const updated = { ...s, status: newStatus };
+          syncSaveServer(updated);
+          return updated;
         }
         return s;
       })
@@ -470,6 +540,9 @@ export default function App() {
     const matchesSearch = 
       server.hostname.toLowerCase().includes(q) ||
       server.model.toLowerCase().includes(q) ||
+      (server.vendor && server.vendor.toLowerCase().includes(q)) ||
+      (server.hypervisor && server.hypervisor.toLowerCase().includes(q)) ||
+      (server.hypervisorVersion && server.hypervisorVersion.toLowerCase().includes(q)) ||
       server.ip.includes(q) ||
       server.bmcIp.includes(q) ||
       server.rack.toLowerCase().includes(q);
@@ -479,6 +552,17 @@ export default function App() {
     // Cluster filter
     if (clusterFilter !== 'all' && server.cluster !== clusterFilter) {
       return false;
+    }
+
+    // Vendor filter (HP, DELL, LENOVO)
+    if (vendorFilter !== 'all') {
+      const v = server.vendor || (server.model.includes('HPE') || server.model.includes('HP') ? 'HP' : server.model.includes('Dell') ? 'DELL' : 'LENOVO');
+      if (v !== vendorFilter) return false;
+    }
+
+    // Hypervisor filter (VMware ESXi, VMware ESXi on Nutanix, Xen Server)
+    if (hypervisorFilter !== 'all') {
+      if (server.hypervisor !== hypervisorFilter) return false;
     }
 
     const compValues = Object.values(server.components) as ComponentFirmware[];
@@ -516,6 +600,8 @@ export default function App() {
         onResetDemo={handleResetDemo}
         totalServers={servers.length}
         criticalCount={criticalCount}
+        dbStatus={dbStatus}
+        onOpenDockerDb={() => setIsDockerDbModalOpen(true)}
       />
 
       {/* Toast Banner */}
@@ -548,6 +634,10 @@ export default function App() {
               onStatusFilterChange={setStatusFilter}
               clusterFilter={clusterFilter}
               onClusterFilterChange={setClusterFilter}
+              vendorFilter={vendorFilter}
+              onVendorFilterChange={setVendorFilter}
+              hypervisorFilter={hypervisorFilter}
+              onHypervisorFilterChange={setHypervisorFilter}
               selectedServerIds={selectedServerIds}
               onClearSelection={() => setSelectedServerIds([])}
               onUpgradeSelected={handleUpgradeSelected}
@@ -648,8 +738,18 @@ export default function App() {
       {/* Footer */}
       <footer className="bg-white border-t border-slate-200 py-4 mt-auto">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between text-xs text-slate-500 gap-2">
-          <div className="flex items-center space-x-2">
-            <span className="w-2 h-2 rounded-full bg-emerald-500" />
+          <div className="flex items-center space-x-3">
+            <button
+              type="button"
+              id="btn-footer-db-status"
+              onClick={() => setIsDockerDbModalOpen(true)}
+              className="flex items-center space-x-1.5 px-2 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 transition-colors font-medium cursor-pointer"
+              title="Click to view PostgreSQL Docker connection & tables"
+            >
+              <span className={`w-2 h-2 rounded-full ${dbStatus?.connected ? 'bg-emerald-500' : 'bg-amber-400'}`} />
+              <span>{dbStatus?.connected ? `PostgreSQL Database Active (${dbStatus.latencyMs ?? 0}ms)` : 'Docker & Local PostgreSQL'}</span>
+            </button>
+            <span>•</span>
             <span>Redfish Telemetry Ingress Active • IPMI 2.0 / DMTF Compliant</span>
           </div>
           <div className="font-mono text-[11px] text-slate-400">
@@ -658,11 +758,34 @@ export default function App() {
         </div>
       </footer>
 
+      {/* Docker & PostgreSQL Modal */}
+      <DockerDbModal
+        isOpen={isDockerDbModalOpen}
+        onClose={() => setIsDockerDbModalOpen(false)}
+        status={dbStatus}
+        onRefreshStatus={refreshDbStatus}
+        onDatabaseReseeded={async () => {
+          const [sRes, pRes, aRes, bRes] = await Promise.all([
+            syncLoadServers(),
+            syncLoadPackages(),
+            syncLoadAuditLogs(),
+            syncLoadBaseline(),
+          ]);
+          setServers(sRes.servers);
+          setPackages(pRes.packages);
+          setAuditLogs(aRes.logs);
+          setBaseline(bRes.baseline);
+          setActiveCampaign(null);
+          showToast('Fleet inventory reloaded from PostgreSQL.', 'success');
+        }}
+      />
+
       {/* Server Detail Modal */}
       {inspectedServer && (
         <ServerDetailModal
           server={inspectedServer}
           onClose={() => setInspectedServer(null)}
+          onSaveServer={handleSaveServer}
           onUpgradeComponent={(srv, comp) => {
             setInspectedServer(null);
             handleQuickUpgrade(srv, comp);

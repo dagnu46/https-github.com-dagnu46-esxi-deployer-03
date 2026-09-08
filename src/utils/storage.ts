@@ -16,7 +16,85 @@ export function loadServers(): Server[] {
       saveServers(INITIAL_SERVERS);
       return INITIAL_SERVERS;
     }
-    return JSON.parse(raw);
+    const parsed: Server[] = JSON.parse(raw);
+
+    // If existing cached data was from an older template lacking HP or LENOVO or Xen Server, refresh to the rich fleet
+    const hasHp = parsed.some(s => s.vendor === 'HP' || s.model?.includes('HPE') || s.model?.includes('HP'));
+    const hasLenovo = parsed.some(s => s.vendor === 'LENOVO' || s.model?.includes('Lenovo'));
+    const hasXen = parsed.some(s => s.hypervisor === 'Xen Server');
+    if (!hasHp || !hasLenovo || !hasXen) {
+      saveServers(INITIAL_SERVERS);
+      return INITIAL_SERVERS;
+    }
+
+    const migrated = parsed.map((s, idx) => {
+      if (!s.vendor) {
+        if (s.model?.includes('HPE') || s.model?.includes('HP')) {
+          s.vendor = 'HP';
+        } else if (s.model?.includes('Lenovo')) {
+          s.vendor = 'LENOVO';
+        } else {
+          s.vendor = 'DELL';
+        }
+      }
+      if (!s.hypervisor) {
+        if (s.cluster?.toLowerCase().includes('nutanix') || s.notes?.toLowerCase().includes('nutanix')) {
+          s.hypervisor = 'VMware ESXi on Nutanix';
+          s.hypervisorVersion = 'ESXi 7.0u3 / Nutanix AOS 6.5.4';
+        } else if (s.cluster?.toLowerCase().includes('xen') || s.hostname?.includes('xen')) {
+          s.hypervisor = 'Xen Server';
+          s.hypervisorVersion = 'XenServer 8.2 CU1 (Citrix Hypervisor)';
+        } else {
+          s.hypervisor = 'VMware ESXi';
+          s.hypervisorVersion = 'ESXi 8.0 Update 2 (Build 22380479)';
+        }
+      }
+      if (s.hypervisorMaintenanceMode === undefined) {
+        s.hypervisorMaintenanceMode = false;
+      }
+      if (s.activeVmsCount === undefined) {
+        s.activeVmsCount = 12 + (idx * 3) % 15;
+      }
+      if (!s.credentials) {
+        s.credentials = {
+          bmcUsername: 'root',
+          bmcPassword: '••••••••',
+          bmcProtocol: s.bmcAffectedType === 'Supermicro IPMI' ? 'ipmi' : 'redfish',
+          bmcPort: s.bmcAffectedType === 'Supermicro IPMI' ? 623 : 443,
+          ignoreSslErrors: true,
+          enableSsh: true,
+          sshPort: 22,
+          sshUsername: 'sysadmin',
+          sshAuthType: 'key',
+        };
+      }
+      if (!s.accessStatus) {
+        s.accessStatus = {
+          status: 'success',
+          testedAt: '2026-09-07T18:30:00Z',
+          testedBy: 'Automated Fleet Scanner',
+          summary: `Verified ${s.credentials.bmcProtocol.toUpperCase()} access (18ms response)`,
+          latencyMs: 18,
+          steps: [
+            { id: '1', name: 'Network Route & ICMP', status: 'success', message: 'Host & BMC IP reachable (1.4ms)' },
+            { id: '2', name: 'Port & TLS Handshake', status: 'success', message: `TCP port ${s.credentials.bmcPort} open` },
+            { id: '3', name: 'BMC Authentication', status: 'success', message: `Auth token granted for user '${s.credentials.bmcUsername}'` },
+            { id: '4', name: 'Telemetry Discovery', status: 'success', message: `Power: ${s.powerState.toUpperCase()} • Chassis Health: OK` },
+          ],
+          discoveredHardware: {
+            model: s.model,
+            serialNumber: `SN-${s.hostname.slice(-6).toUpperCase()}`,
+            powerState: s.powerState === 'rebooting' ? 'on' : s.powerState,
+            bmcVersionDetected: s.components.BMC?.currentVersion,
+            biosVersionDetected: s.components.BIOS?.currentVersion,
+            chassisHealth: 'OK',
+            redfishVersion: 'v1.15',
+          },
+        };
+      }
+      return s;
+    });
+    return migrated;
   } catch (e) {
     console.error('Failed to parse stored servers', e);
     return INITIAL_SERVERS;

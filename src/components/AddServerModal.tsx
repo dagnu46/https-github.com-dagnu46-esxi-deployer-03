@@ -30,6 +30,8 @@ export const AddServerModal: React.FC<AddServerModalProps> = ({
     e.preventDefault();
     if (!hostname) return;
 
+    const vendor = (model.startsWith('HPE') || model.startsWith('HP')) ? 'HP' : model.startsWith('Dell') ? 'DELL' : 'LENOVO';
+
     const newServer: Server = {
       id: `srv-${Date.now().toString().slice(-4)}`,
       hostname,
@@ -41,6 +43,11 @@ export const AddServerModal: React.FC<AddServerModalProps> = ({
       bmcIp,
       bmcAffectedType,
       model,
+      vendor,
+      hypervisor: 'VMware ESXi',
+      hypervisorVersion: 'ESXi 8.0 Update 2 (Build 22380479)',
+      hypervisorMaintenanceMode: false,
+      activeVmsCount: 12,
       architecture: 'x86_64',
       status: 'online',
       powerState: 'on',

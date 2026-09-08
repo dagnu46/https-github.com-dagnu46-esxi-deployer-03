@@ -9,9 +9,11 @@ import {
   RotateCcw, 
   CheckCircle2, 
   AlertTriangle, 
-  Terminal
+  Terminal,
+  Database
 } from 'lucide-react';
 import { UpgradeCampaign } from '../types';
+import { DatabaseStatus } from '../services/api';
 
 export type NavTab = 'fleet' | 'catalog' | 'campaign' | 'compliance' | 'audit';
 
@@ -23,6 +25,8 @@ interface HeaderProps {
   onResetDemo: () => void;
   totalServers: number;
   criticalCount: number;
+  dbStatus?: DatabaseStatus | null;
+  onOpenDockerDb?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -33,6 +37,8 @@ export const Header: React.FC<HeaderProps> = ({
   onResetDemo,
   totalServers,
   criticalCount,
+  dbStatus,
+  onOpenDockerDb,
 }) => {
   const isCampaignActive = activeCampaign && (activeCampaign.status === 'running' || activeCampaign.status === 'paused');
   const completedServers = activeCampaign ? activeCampaign.servers.filter(s => s.stage === 'completed').length : 0;
@@ -84,6 +90,26 @@ export const Header: React.FC<HeaderProps> = ({
               >
                 <Terminal className="w-3.5 h-3.5 text-indigo-600" />
                 <span>Campaign In Progress ({completedServers}/{totalCampaignServers})</span>
+              </button>
+            )}
+
+            {onOpenDockerDb && (
+              <button
+                type="button"
+                id="btn-open-docker-db"
+                onClick={onOpenDockerDb}
+                className={`px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-colors flex items-center gap-1.5 ${
+                  dbStatus?.connected 
+                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+                    : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                }`}
+                title="PostgreSQL Database & Local Docker Configuration"
+              >
+                <Database className={`w-3.5 h-3.5 ${dbStatus?.connected ? 'text-emerald-600' : 'text-indigo-600'}`} />
+                <span>
+                  {dbStatus?.connected ? `Postgres (${dbStatus.latencyMs ?? 0}ms)` : 'Docker / DB'}
+                </span>
+                <span className={`w-2 h-2 rounded-full ${dbStatus?.connected ? 'bg-emerald-500' : 'bg-amber-400'}`} />
               </button>
             )}
 
