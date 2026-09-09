@@ -1,4 +1,17 @@
-import { Server, FirmwarePackage, AuditRecord, BaselineConfig, UpgradeCampaign, VmwareVcenterConfig, VmwareIsoMountRequest, VmwareIsoMountResult, VmwareVmInfo } from '../types';
+import { 
+  Server, 
+  FirmwarePackage, 
+  AuditRecord, 
+  BaselineConfig, 
+  UpgradeCampaign, 
+  VmwareVcenterConfig, 
+  VmwareIsoMountRequest, 
+  VmwareIsoMountResult, 
+  VmwareVmInfo,
+  VmwareDatastoreInfo,
+  VmwareFileUploadResult,
+  VmwarePowerStateResult
+} from '../types';
 import { 
   loadServers, 
   saveServers, 
@@ -313,4 +326,110 @@ export async function unmountIsoFromVmwareVm(params: { vmId: string; vmName?: st
     return { success: false, error: e.message || 'ISO Unmount request failed' };
   }
 }
+
+export async function fetchVmwareDatastores(config: VmwareVcenterConfig): Promise<{
+  success: boolean;
+  isSimulation?: boolean;
+  datastores: VmwareDatastoreInfo[];
+  total?: number;
+  retrievedAt?: string;
+  latencyMs?: number;
+  message?: string;
+  error?: string;
+}> {
+  try {
+    const res = await fetch('/api/vmware/datastores', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ vcenter: config }),
+    });
+    return await res.json();
+  } catch (e: any) {
+    return {
+      success: false,
+      datastores: [],
+      error: e.message || 'Failed to retrieve datastores from vCenter',
+    };
+  }
+}
+
+export async function uploadFileToDatastore(params: {
+  fileName: string;
+  fileContentBase64?: string;
+  fileSize?: number;
+  datastore: string;
+}): Promise<VmwareFileUploadResult> {
+  try {
+    const res = await fetch('/api/vmware/datastores/upload', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    });
+    return await res.json();
+  } catch (e: any) {
+    return {
+      success: false,
+      fileName: params.fileName,
+      fileSize: params.fileSize || 0,
+      datastore: params.datastore,
+      datastorePath: `[${params.datastore}] iso/${params.fileName}`,
+      storedPathOnServer: '',
+      verifiedOnServer: false,
+      uploadedAt: new Date().toISOString(),
+      error: e.message || 'Failed to upload and verify file on datastore',
+    };
+  }
+}
+
+export async function verifyDatastoreFile(params: {
+  fileName: string;
+  datastore: string;
+}): Promise<VmwareFileUploadResult> {
+  try {
+    const res = await fetch('/api/vmware/datastores/verify-file', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    });
+    return await res.json();
+  } catch (e: any) {
+    return {
+      success: false,
+      fileName: params.fileName,
+      fileSize: 0,
+      datastore: params.datastore,
+      datastorePath: `[${params.datastore}] iso/${params.fileName}`,
+      storedPathOnServer: '',
+      verifiedOnServer: false,
+      uploadedAt: new Date().toISOString(),
+      error: e.message || 'Verification check failed',
+    };
+  }
+}
+
+export async function manageVmPowerState(params: {
+  vmId: string;
+  vmName?: string;
+  action: 'powerOn' | 'powerOff' | 'reset' | 'status';
+  vcenter?: VmwareVcenterConfig;
+}): Promise<VmwarePowerStateResult> {
+  try {
+    const res = await fetch('/api/vmware/vms/power-state', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    });
+    return await res.json();
+  } catch (e: any) {
+    return {
+      success: false,
+      vmId: params.vmId,
+      vmName: params.vmName || 'Target VM',
+      powerState: 'poweredOff',
+      lastChecked: new Date().toISOString(),
+      error: e.message || 'Power state command failed',
+    };
+  }
+}
+
 

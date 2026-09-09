@@ -260,6 +260,54 @@ export interface VmwareVmInfo {
   };
 }
 
+export interface VmwareDatastoreInfo {
+  name: string;
+  type: string; // VMFS-6, vSAN, NFS-4.1, etc.
+  capacityBytes: number;
+  freeBytes: number;
+  accessible: boolean;
+  status: 'normal' | 'warning' | 'alert';
+  url?: string;
+}
+
+export interface VmwareFileUploadResult {
+  success: boolean;
+  fileName: string;
+  fileSize: number;
+  datastore: string;
+  datastorePath: string; // e.g. [datastore1] iso/P89201_SPP.iso
+  storedPathOnServer: string; // real filesystem path on server
+  verifiedOnServer: boolean;
+  sha256?: string;
+  md5?: string;
+  permissions?: string;
+  uploadedAt: string;
+  error?: string;
+}
+
+export interface VmwarePowerStateResult {
+  success: boolean;
+  vmId: string;
+  vmName: string;
+  powerState: 'poweredOn' | 'poweredOff' | 'suspended';
+  uptimeSeconds?: number;
+  guestHeartbeat?: 'green' | 'yellow' | 'red' | 'gray';
+  toolsStatus?: 'toolsOk' | 'toolsNotRunning' | 'toolsNotInstalled';
+  bootDevice?: string;
+  lastChecked: string;
+  message?: string;
+  error?: string;
+}
+
+export interface VmwareLogEntry {
+  id: string;
+  timestamp: string;
+  level: 'info' | 'success' | 'warn' | 'error';
+  category: 'VCENTER' | 'DATASTORE' | 'UPLOAD' | 'VERIFY' | 'CONNECT' | 'POWER' | 'SYSTEM';
+  message: string;
+  details?: string;
+}
+
 export interface VmwareIsoMountRequest {
   vcenter: VmwareVcenterConfig;
   vmId: string;
