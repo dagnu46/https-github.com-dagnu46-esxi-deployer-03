@@ -268,6 +268,8 @@ export interface VmwareDatastoreInfo {
   accessible: boolean;
   status: 'normal' | 'warning' | 'alert';
   url?: string;
+  vmAccessible?: boolean;
+  mountedDisksCount?: number;
 }
 
 export interface VmwareFileUploadResult {
@@ -294,6 +296,13 @@ export interface VmwarePowerStateResult {
   guestHeartbeat?: 'green' | 'yellow' | 'red' | 'gray';
   toolsStatus?: 'toolsOk' | 'toolsNotRunning' | 'toolsNotInstalled';
   bootDevice?: string;
+  cdromConnected?: boolean;
+  cdromIsoPath?: string | null;
+  cpus?: number;
+  memoryMb?: number;
+  guestOs?: string;
+  ipAddress?: string;
+  isSimulation?: boolean;
   lastChecked: string;
   message?: string;
   error?: string;

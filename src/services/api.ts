@@ -327,13 +327,19 @@ export async function unmountIsoFromVmwareVm(params: { vmId: string; vmName?: st
   }
 }
 
-export async function fetchVmwareDatastores(config: VmwareVcenterConfig): Promise<{
+export async function fetchVmwareDatastores(params: {
+  config: VmwareVcenterConfig;
+  vmId?: string;
+  vmName?: string;
+}): Promise<{
   success: boolean;
   isSimulation?: boolean;
   datastores: VmwareDatastoreInfo[];
   total?: number;
   retrievedAt?: string;
   latencyMs?: number;
+  targetVmId?: string;
+  targetVmName?: string;
   message?: string;
   error?: string;
 }> {
@@ -341,7 +347,11 @@ export async function fetchVmwareDatastores(config: VmwareVcenterConfig): Promis
     const res = await fetch('/api/vmware/datastores', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ vcenter: config }),
+      body: JSON.stringify({ 
+        vcenter: params.config,
+        vmId: params.vmId,
+        vmName: params.vmName
+      }),
     });
     return await res.json();
   } catch (e: any) {

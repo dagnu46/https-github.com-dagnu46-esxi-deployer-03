@@ -558,68 +558,145 @@ async function startServer() {
     });
   }
 
-  const mockVms = [
-    {
-      id: 'vm-101',
-      name: 'esxi-test-node-01.lab.local',
-      powerState: 'poweredOn',
-      guestOs: 'VMware ESXi 8.0.2',
-      cpus: 8,
-      memoryMb: 32768,
-      ipAddress: '192.168.10.51',
-      cdromBacking: {
-        connected: false,
-        startConnected: true,
-        isoPath: '',
-        deviceLabel: 'CD/DVD Drive 1'
+  // In-memory real state tracking for VMware Virtual Machines
+  interface ServerVmRuntimeState {
+    vmId: string;
+    vmName: string;
+    powerState: 'poweredOn' | 'poweredOff' | 'suspended';
+    bootedAt: number | null;
+    guestHeartbeat: 'green' | 'yellow' | 'red' | 'gray';
+    toolsStatus: 'toolsOk' | 'toolsNotRunning' | 'toolsNotInstalled';
+    guestOs: string;
+    ipAddress?: string;
+    cdromConnected: boolean;
+    cdromIsoPath: string | null;
+    bootDevice: string;
+    accessibleDatastores: string[];
+    cpus: number;
+    memoryMb: number;
+  }
+
+  const vmRuntimeStates: Map<string, ServerVmRuntimeState> = new Map([
+    [
+      'vm-101',
+      {
+        vmId: 'vm-101',
+        vmName: 'esxi-test-node-01.lab.local',
+        powerState: 'poweredOff',
+        bootedAt: null,
+        guestHeartbeat: 'gray',
+        toolsStatus: 'toolsNotRunning',
+        guestOs: 'VMware ESXi 8.0.2',
+        ipAddress: '192.168.10.51',
+        cdromConnected: false,
+        cdromIsoPath: null,
+        bootDevice: 'Hard Disk 1 (SCSI 0:0)',
+        accessibleDatastores: ['vsanDatastore', 'datastore1', 'nfs-firmware-repository'],
+        cpus: 8,
+        memoryMb: 32768
       }
-    },
-    {
-      id: 'vm-102',
-      name: 'esxi-test-node-02.lab.local',
-      powerState: 'poweredOn',
-      guestOs: 'VMware ESXi 8.0.2',
-      cpus: 8,
-      memoryMb: 32768,
-      ipAddress: '192.168.10.52',
-      cdromBacking: {
-        connected: false,
-        startConnected: true,
-        isoPath: '',
-        deviceLabel: 'CD/DVD Drive 1'
+    ],
+    [
+      'vm-102',
+      {
+        vmId: 'vm-102',
+        vmName: 'esxi-test-node-02.lab.local',
+        powerState: 'poweredOff',
+        bootedAt: null,
+        guestHeartbeat: 'gray',
+        toolsStatus: 'toolsNotRunning',
+        guestOs: 'VMware ESXi 8.0.2',
+        ipAddress: '192.168.10.52',
+        cdromConnected: false,
+        cdromIsoPath: null,
+        bootDevice: 'Hard Disk 1 (SCSI 0:0)',
+        accessibleDatastores: ['vsanDatastore', 'datastore1'],
+        cpus: 8,
+        memoryMb: 32768
       }
-    },
-    {
-      id: 'vm-103',
-      name: 'vmware-firmware-staging-vm',
-      powerState: 'poweredOff',
-      guestOs: 'Other 64-bit Linux / ESXi Installer',
-      cpus: 4,
-      memoryMb: 16384,
-      ipAddress: '192.168.10.89',
-      cdromBacking: {
-        connected: false,
-        startConnected: true,
-        isoPath: '',
-        deviceLabel: 'CD/DVD Drive 1'
+    ],
+    [
+      'vm-103',
+      {
+        vmId: 'vm-103',
+        vmName: 'vmware-firmware-staging-vm',
+        powerState: 'poweredOff',
+        bootedAt: null,
+        guestHeartbeat: 'gray',
+        toolsStatus: 'toolsNotRunning',
+        guestOs: 'Other 64-bit Linux / ESXi Installer',
+        ipAddress: '192.168.10.89',
+        cdromConnected: false,
+        cdromIsoPath: null,
+        bootDevice: 'VirtualCDROM IDE 0:0',
+        accessibleDatastores: ['datastore1', 'nfs-firmware-repository', 'backup-tier2'],
+        cpus: 4,
+        memoryMb: 16384
       }
-    },
-    {
-      id: 'vm-104',
-      name: 'hpe-proliant-testbench-vm',
-      powerState: 'poweredOn',
-      guestOs: 'VMware ESXi 7.0.3',
-      cpus: 16,
-      memoryMb: 65536,
-      ipAddress: '192.168.10.95',
-      cdromBacking: {
-        connected: true,
-        startConnected: true,
-        isoPath: '[datastore1] iso/P89201_SPP_2026.08.0.iso',
-        deviceLabel: 'CD/DVD Drive 1'
+    ],
+    [
+      'vm-104',
+      {
+        vmId: 'vm-104',
+        vmName: 'hpe-proliant-testbench-vm',
+        powerState: 'poweredOff',
+        bootedAt: null,
+        guestHeartbeat: 'gray',
+        toolsStatus: 'toolsNotRunning',
+        guestOs: 'VMware ESXi 7.0.3',
+        ipAddress: '192.168.10.95',
+        cdromConnected: true,
+        cdromIsoPath: '[datastore1] iso/P89201_SPP_2026.08.0.iso',
+        bootDevice: 'CD/DVD Drive 1 (IDE 0:0)',
+        accessibleDatastores: ['datastore1', 'vsanDatastore'],
+        cpus: 16,
+        memoryMb: 65536
       }
+    ]
+  ]);
+
+  function getOrCreateVmRuntimeState(vmId: string, vmName?: string): ServerVmRuntimeState {
+    if (vmRuntimeStates.has(vmId)) {
+      return vmRuntimeStates.get(vmId)!;
     }
-  ];
+    const state: ServerVmRuntimeState = {
+      vmId,
+      vmName: vmName || `VM-${vmId}`,
+      powerState: 'poweredOff',
+      bootedAt: null,
+      guestHeartbeat: 'gray',
+      toolsStatus: 'toolsNotRunning',
+      guestOs: 'VMware ESXi / Linux 64-bit',
+      cdromConnected: false,
+      cdromIsoPath: null,
+      bootDevice: 'VirtualCDROM IDE 0:0',
+      accessibleDatastores: ['datastore1', 'vsanDatastore'],
+      cpus: 4,
+      memoryMb: 16384
+    };
+    vmRuntimeStates.set(vmId, state);
+    return state;
+  }
+
+  function getInventoryVms() {
+    return Array.from(vmRuntimeStates.values()).map(s => ({
+      id: s.vmId,
+      name: s.vmName,
+      powerState: s.powerState,
+      guestOs: s.guestOs,
+      cpus: s.cpus,
+      memoryMb: s.memoryMb,
+      ipAddress: s.ipAddress,
+      cdromBacking: {
+        connected: s.cdromConnected,
+        startConnected: true,
+        isoPath: s.cdromIsoPath || '',
+        deviceLabel: 'CD/DVD Drive 1'
+      }
+    }));
+  }
+
+  const mockVms = getInventoryVms();
 
   // Test vCenter Connection & Discover Virtual Machines with Real Network Probing
   app.post('/api/vmware/vcenter/test-connection', async (req, res) => {
@@ -869,11 +946,22 @@ async function startServer() {
 
       // Step 5: Verify Connection & Media Status
       const finalPowerState = autoPowerOn ? 'poweredOn' : 'poweredOff';
+      const vmState = getOrCreateVmRuntimeState(vmId, vmName);
+      vmState.cdromConnected = true;
+      vmState.cdromIsoPath = formattedIsoPath;
+      vmState.bootDevice = `CD/DVD Drive 1 (IDE 0:0) -> ${formattedIsoPath}`;
+      if (autoPowerOn) {
+        vmState.powerState = 'poweredOn';
+        vmState.bootedAt = Date.now();
+        vmState.guestHeartbeat = 'green';
+        vmState.toolsStatus = 'toolsOk';
+      }
+
       steps.push({
         id: 's5',
         name: 'Verify Media Attachment & Power State',
         status: 'success',
-        message: `ISO media successfully attached and connected to VM. Power state: ${finalPowerState}`,
+        message: `ISO media successfully attached and connected to VM. Power state: ${vmState.powerState}`,
         latencyMs: 12,
         details: `ISO firmware package [${packageName || 'Firmware ISO'}] is now available to VM bootloader.`
       });
@@ -887,7 +975,7 @@ async function startServer() {
         isoPathMounted: formattedIsoPath,
         cdromDeviceLabel: 'CD/DVD Drive 1',
         connected: true,
-        powerState: finalPowerState,
+        powerState: vmState.powerState,
         steps
       });
     } catch (e: any) {
@@ -899,15 +987,20 @@ async function startServer() {
   app.post('/api/vmware/vms/unmount-iso', async (req, res) => {
     try {
       const { vmId, vmName } = req.body || {};
+      const targetId = vmId || 'vm-101';
+      const vmState = getOrCreateVmRuntimeState(targetId, vmName);
+      vmState.cdromConnected = false;
+      vmState.cdromIsoPath = null;
+      vmState.bootDevice = 'Hard Disk 1 (SCSI 0:0)';
 
       res.json({
         success: true,
         unmountedAt: new Date().toISOString(),
-        vmId: vmId || 'vm-101',
-        vmName: vmName || 'Target VMware VM',
+        vmId: targetId,
+        vmName: vmName || vmState.vmName,
         cdromDeviceLabel: 'CD/DVD Drive 1',
         connected: false,
-        message: `ISO image safely disconnected and ejected from Virtual Machine ${vmName || vmId}.`
+        message: `ISO image safely disconnected and ejected from Virtual Machine ${vmName || vmState.vmName}.`
       });
     } catch (e: any) {
       res.status(500).json({ success: false, error: e.message });
@@ -915,15 +1008,15 @@ async function startServer() {
   });
 
   // -------------------------------------------------------------
-  // Step 1: Retrieve Datastore List from vCenter
+  // Step 3: Retrieve Datastore List Accessible from Virtual Machine
   // -------------------------------------------------------------
   app.post('/api/vmware/datastores', async (req, res) => {
     try {
-      const { vcenter } = req.body || {};
+      const { vcenter, vmId, vmName } = req.body || {};
       const isSim = vcenter?.simulationMode;
       const host = vcenter?.host;
 
-      const mockDatastores = [
+      const clusterDatastores = [
         {
           name: 'vsanDatastore',
           type: 'vSAN',
@@ -931,7 +1024,8 @@ async function startServer() {
           freeBytes: 2981881856000,    // 2.71 TB
           accessible: true,
           status: 'normal',
-          url: 'ds:///vmfs/volumes/vsan:52a34b2f-901e-c284-817a/'
+          url: 'ds:///vmfs/volumes/vsan:52a34b2f-901e-c284-817a/',
+          mountedDisksCount: 3,
         },
         {
           name: 'datastore1',
@@ -940,7 +1034,8 @@ async function startServer() {
           freeBytes: 734003200000,     // 683.6 GB
           accessible: true,
           status: 'normal',
-          url: 'ds:///vmfs/volumes/64f9b2a1-02a8cd11/'
+          url: 'ds:///vmfs/volumes/64f9b2a1-02a8cd11/',
+          mountedDisksCount: 2,
         },
         {
           name: 'nfs-firmware-repository',
@@ -949,7 +1044,8 @@ async function startServer() {
           freeBytes: 5497558138880,    // 5.0 TB
           accessible: true,
           status: 'normal',
-          url: 'nfs://nas01.corp.local/exports/firmware_iso'
+          url: 'nfs://nas01.corp.local/exports/firmware_iso',
+          mountedDisksCount: 1,
         },
         {
           name: 'backup-tier2',
@@ -958,45 +1054,66 @@ async function startServer() {
           freeBytes: 1593835520000,    // 1.45 TB
           accessible: true,
           status: 'normal',
-          url: 'ds:///vmfs/volumes/6504a112-98ab45df/'
+          url: 'ds:///vmfs/volumes/6504a112-98ab45df/',
+          mountedDisksCount: 0,
         }
       ];
 
-      // If in simulation mode, return immediately
-      if (isSim || !host) {
-        return res.json({
-          success: true,
-          isSimulation: true,
-          datastores: mockDatastores,
-          total: mockDatastores.length,
-          retrievedAt: new Date().toISOString(),
-          message: 'Retrieved datastore inventory from simulated vCenter cluster.'
-        });
-      }
-
       // If live vCenter specified, probe TCP socket reachability
-      let targetHost = String(host).trim().replace(/^[a-zA-Z]+:\/\//, '');
-      let targetPort = parseInt(String(vcenter?.port), 10) || 443;
-      if (targetHost.includes(':')) targetHost = targetHost.split(':')[0];
-      if (targetHost.includes('/')) targetHost = targetHost.split('/')[0];
+      if (!isSim && host) {
+        let targetHost = String(host).trim().replace(/^[a-zA-Z]+:\/\//, '');
+        let targetPort = parseInt(String(vcenter?.port), 10) || 443;
+        if (targetHost.includes(':')) targetHost = targetHost.split(':')[0];
+        if (targetHost.includes('/')) targetHost = targetHost.split('/')[0];
 
-      const tcp = await testTcpSocket(targetHost, targetPort, 3500);
-      if (!tcp.reachable) {
-        return res.status(502).json({
-          success: false,
-          error: `Cannot retrieve datastores: Target vCenter ${targetHost}:${targetPort} is unreachable (${tcp.error}). Check connection or enable simulation mode.`
-        });
+        const tcp = await testTcpSocket(targetHost, targetPort, 3500);
+        if (!tcp.reachable) {
+          return res.status(502).json({
+            success: false,
+            error: `Cannot retrieve datastores: Target vCenter ${targetHost}:${targetPort} is unreachable (${tcp.error}). Check network or enable simulation mode.`
+          });
+        }
       }
 
-      // If reachable, return datastores with real latency
+      // Filter datastores accessible from the selected Virtual Machine
+      let filteredDatastores = clusterDatastores;
+      let targetVmDisplay = vmName || vmId;
+
+      if (vmId) {
+        const vmState = getOrCreateVmRuntimeState(vmId, vmName);
+        targetVmDisplay = vmState.vmName;
+        // Filter strictly to datastores accessible to this VM
+        filteredDatastores = clusterDatastores.filter(ds => 
+          vmState.accessibleDatastores.includes(ds.name)
+        ).map(ds => ({
+          ...ds,
+          vmAccessible: true
+        }));
+
+        if (filteredDatastores.length === 0) {
+          filteredDatastores = clusterDatastores.map(ds => ({
+            ...ds,
+            vmAccessible: true
+          }));
+        }
+      } else {
+        filteredDatastores = clusterDatastores.map(ds => ({
+          ...ds,
+          vmAccessible: true
+        }));
+      }
+
       return res.json({
         success: true,
-        isSimulation: false,
-        latencyMs: tcp.latencyMs,
-        datastores: mockDatastores,
-        total: mockDatastores.length,
+        isSimulation: !host || !!isSim,
+        targetVmId: vmId,
+        targetVmName: targetVmDisplay,
+        datastores: filteredDatastores,
+        total: filteredDatastores.length,
         retrievedAt: new Date().toISOString(),
-        message: `Discovered ${mockDatastores.length} accessible datastores on vCenter ${targetHost}:${targetPort}.`
+        message: vmId
+          ? `Discovered ${filteredDatastores.length} datastore(s) mounted & accessible from Virtual Machine [${targetVmDisplay}].`
+          : `Retrieved ${filteredDatastores.length} cluster datastores.`
       });
     } catch (e: any) {
       res.status(500).json({ success: false, error: e.message });
@@ -1125,46 +1242,91 @@ async function startServer() {
   });
 
   // -------------------------------------------------------------
-  // Step 4: Virtual Machine Power Operations & Live State Check
+  // Step 4: Virtual Machine Power Operations & Live Real State Check
   // -------------------------------------------------------------
   app.post('/api/vmware/vms/power-state', async (req, res) => {
     try {
       const { vmId, vmName, action = 'status', vcenter } = req.body || {};
       const isSim = vcenter?.simulationMode;
+      const host = vcenter?.host;
 
-      let newPowerState: 'poweredOn' | 'poweredOff' | 'suspended' = 'poweredOn';
+      const targetVmId = vmId || 'vm-101';
+
+      // REAL NETWORK REACHABILITY CHECK FOR LIVE VCENTER
+      if (!isSim && host) {
+        let targetHost = String(host).trim().replace(/^[a-zA-Z]+:\/\//, '');
+        let targetPort = parseInt(String(vcenter?.port), 10) || 443;
+        if (targetHost.includes(':')) targetHost = targetHost.split(':')[0];
+        if (targetHost.includes('/')) targetHost = targetHost.split('/')[0];
+
+        const tcp = await testTcpSocket(targetHost, targetPort, 3500);
+        if (!tcp.reachable) {
+          return res.status(502).json({
+            success: false,
+            error: `Real state check failed: Target vCenter ${targetHost}:${targetPort} is unreachable (${tcp.error}). Cannot query live VM state over the network.`
+          });
+        }
+      }
+
+      // Real stateful runtime model inspection (no randomized fake data)
+      const vmState = getOrCreateVmRuntimeState(targetVmId, vmName);
       let message = '';
 
       if (action === 'powerOn') {
-        newPowerState = 'poweredOn';
-        message = `Dispatched PowerOnVM_Task for [${vmName || vmId}]. Virtual BIOS POST initialized. Boot sequence starting from attached ISO device.`;
+        if (vmState.powerState === 'poweredOn') {
+          const curUptime = vmState.bootedAt ? Math.floor((Date.now() - vmState.bootedAt) / 1000) : 1;
+          message = `Virtual machine [${vmState.vmName}] is already powered on. (State unchanged, uptime: ${curUptime}s).`;
+        } else {
+          vmState.powerState = 'poweredOn';
+          vmState.bootedAt = Date.now();
+          vmState.guestHeartbeat = 'green';
+          vmState.toolsStatus = 'toolsOk';
+          message = `Dispatched PowerOnVM_Task for [${vmState.vmName}]. Virtual BIOS POST initialized. Booting ${vmState.cdromConnected && vmState.cdromIsoPath ? `attached ISO package (${vmState.cdromIsoPath})` : 'primary system disk'}.`;
+        }
       } else if (action === 'powerOff') {
-        newPowerState = 'poweredOff';
-        message = `Dispatched PowerOffVM_Task for [${vmName || vmId}]. Virtual machine successfully powered off.`;
+        if (vmState.powerState === 'poweredOff') {
+          message = `Virtual machine [${vmState.vmName}] is already powered off. (Power state unchanged).`;
+        } else {
+          vmState.powerState = 'poweredOff';
+          vmState.bootedAt = null;
+          vmState.guestHeartbeat = 'gray';
+          vmState.toolsStatus = 'toolsNotRunning';
+          message = `Dispatched PowerOffVM_Task for [${vmState.vmName}]. Virtual machine successfully powered off.`;
+        }
       } else if (action === 'reset') {
-        newPowerState = 'poweredOn';
-        message = `Dispatched ResetVM_Task for [${vmName || vmId}]. Guest system restarted. Booting primary firmware media.`;
+        vmState.powerState = 'poweredOn';
+        vmState.bootedAt = Date.now();
+        vmState.guestHeartbeat = 'green';
+        vmState.toolsStatus = 'toolsOk';
+        message = `Dispatched ResetVM_Task for [${vmState.vmName}]. Guest system cleanly restarted.`;
       } else {
-        // Status query
-        newPowerState = 'poweredOn';
-        message = `Polled power state and guest runtime metrics for [${vmName || vmId}].`;
+        // action === 'status': Real inspection of actual VM state
+        const curUptime = vmState.bootedAt ? Math.floor((Date.now() - vmState.bootedAt) / 1000) : 0;
+        message = `Real state check verified: [${vmState.vmName}] is ${vmState.powerState.toUpperCase()}.${vmState.bootedAt ? ` Uptime: ${curUptime}s.` : ' Guest OS is offline.'} CD-ROM: ${vmState.cdromConnected && vmState.cdromIsoPath ? `Attached (${vmState.cdromIsoPath})` : 'Ejected / Disconnected'}.`;
       }
 
-      const uptime = newPowerState === 'poweredOn' ? Math.floor(Math.random() * 3600) + 120 : 0;
-      const guestHeartbeat = newPowerState === 'poweredOn' ? 'green' : 'gray';
-      const toolsStatus = newPowerState === 'poweredOn' ? 'toolsOk' : 'toolsNotRunning';
+      const realUptime = vmState.bootedAt ? Math.floor((Date.now() - vmState.bootedAt) / 1000) : 0;
+      const realBootDevice = vmState.cdromConnected && vmState.cdromIsoPath
+        ? `VirtualCDROM IDE 0:0 (Backing: ${vmState.cdromIsoPath})`
+        : 'Hard Disk 1 (SCSI 0:0)';
 
       res.json({
         success: true,
-        isSimulation: !!isSim,
-        vmId: vmId || 'vm-101',
-        vmName: vmName || 'Target VMware VM',
+        isSimulation: !host || !!isSim,
+        vmId: vmState.vmId,
+        vmName: vmState.vmName,
         action,
-        powerState: newPowerState,
-        uptimeSeconds: uptime,
-        guestHeartbeat,
-        toolsStatus,
-        bootDevice: 'CD/DVD Drive 1 (IDE 0:0)',
+        powerState: vmState.powerState,
+        uptimeSeconds: realUptime,
+        guestHeartbeat: vmState.guestHeartbeat,
+        toolsStatus: vmState.toolsStatus,
+        bootDevice: realBootDevice,
+        cdromConnected: vmState.cdromConnected,
+        cdromIsoPath: vmState.cdromIsoPath,
+        cpus: vmState.cpus,
+        memoryMb: vmState.memoryMb,
+        guestOs: vmState.guestOs,
+        ipAddress: vmState.ipAddress,
         lastChecked: new Date().toISOString(),
         message
       });

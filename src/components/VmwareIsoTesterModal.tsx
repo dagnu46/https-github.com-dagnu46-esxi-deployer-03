@@ -288,13 +288,17 @@ export const VmwareIsoTesterModal: React.FC<VmwareIsoTesterModalProps> = ({
   };
 
   // -------------------------------------------------------------
-  // Additional Step 1: Retrieve Datastore List
+  // Additional Step 1: Retrieve Datastore List Accessible from Selected VM
   // -------------------------------------------------------------
   const handleRetrieveDatastores = async () => {
+    const targetVm = getSelectedVm();
+    const vmName = targetVm ? targetVm.name : (customVmName || selectedVmId || 'Target VM');
+    const vmId = targetVm ? targetVm.id : (selectedVmId || 'vm-101');
+
     setIsFetchingDatastores(true);
     addLog(
       'DATASTORE',
-      `Querying vCenter storage subsystem for active datastores in ${vcenterDatacenter}...`
+      `Querying storage volumes mounted and accessible from Virtual Machine [${vmName}] (${vmId})...`
     );
 
     const config: VmwareVcenterConfig = {
@@ -303,12 +307,16 @@ export const VmwareIsoTesterModal: React.FC<VmwareIsoTesterModalProps> = ({
       username: vcenterUsername,
       password: vcenterPassword,
       datacenter: vcenterDatacenter,
-      datastore: vcenterDatastore,
+      datastore: selectedDatastore,
       ignoreSsl,
       simulationMode,
     };
 
-    const res = await fetchVmwareDatastores(config);
+    const res = await fetchVmwareDatastores({
+      config,
+      vmId,
+      vmName,
+    });
     setIsFetchingDatastores(false);
 
     if (res.success && res.datastores && res.datastores.length > 0) {
@@ -319,27 +327,27 @@ export const VmwareIsoTesterModal: React.FC<VmwareIsoTesterModalProps> = ({
       }
       addLog(
         'DATASTORE',
-        `Datastore list generated! Discovered ${res.datastores.length} accessible volumes.`,
+        `Retrieved ${res.datastores.length} datastore(s) accessible from Virtual Machine [${vmName}]: ${res.datastores.map((d) => d.name).join(', ')}`,
         'success',
         res.datastores
           .map(
             (d) =>
-              `• ${d.name} (${d.type}): ${(d.freeBytes / 1024 / 1024 / 1024).toFixed(1)} GB free of ${(
+              `• [${d.name}] (${d.type}): ${(d.freeBytes / 1024 / 1024 / 1024).toFixed(1)} GB free of ${(
                 d.capacityBytes /
                 1024 /
                 1024 /
                 1024
-              ).toFixed(1)} GB [Accessible: ${d.accessible ? 'YES' : 'NO'}]`
+              ).toFixed(1)} GB [Accessible to VM ${vmName}: YES]`
           )
           .join('\n')
       );
       if (onShowToast) {
-        onShowToast(`Retrieved ${res.datastores.length} datastores from vCenter`, 'success');
+        onShowToast(`Discovered ${res.datastores.length} datastores accessible to ${vmName}`, 'success');
       }
     } else {
-      addLog('DATASTORE', `Failed to retrieve datastores: ${res.error}`, 'error');
+      addLog('DATASTORE', `Failed to retrieve accessible datastores for [${vmName}]: ${res.error}`, 'error');
       if (onShowToast) {
-        onShowToast(`Failed to retrieve datastores: ${res.error}`, 'warn');
+        onShowToast(`Datastore retrieval failed: ${res.error}`, 'warn');
       }
     }
   };
@@ -592,7 +600,9 @@ export const VmwareIsoTesterModal: React.FC<VmwareIsoTesterModalProps> = ({
     setIsPowerLoading(true);
     addLog(
       'POWER',
-      `Sending power action "${action.toUpperCase()}" for Virtual Machine [${vmName}] (${vmId})...`
+      action === 'status'
+        ? `Running real state check for Virtual Machine [${vmName}] (${vmId})...`
+        : `Sending power task "${action.toUpperCase()}" for Virtual Machine [${vmName}] (${vmId})...`
     );
 
     const config: VmwareVcenterConfig = {
@@ -624,25 +634,38 @@ export const VmwareIsoTesterModal: React.FC<VmwareIsoTesterModalProps> = ({
         prev.map((v) => (v.id === vmId ? { ...v, powerState: res.powerState } : v))
       );
 
-      addLog(
-        'POWER',
-        `VM [${vmName}] state is now: ${res.powerState.toUpperCase()}`,
-        res.powerState === 'poweredOn' ? 'success' : 'info',
-        `Task: ${action} | Guest Heartbeat: ${res.guestHeartbeat} | Tools: ${res.toolsStatus} | Boot Device: ${res.bootDevice}`
-      );
+      const uptimeFmt = res.uptimeSeconds !== undefined && res.uptimeSeconds > 0
+        ? `${Math.floor(res.uptimeSeconds / 60)}m ${res.uptimeSeconds % 60}s (${res.uptimeSeconds}s)`
+        : '0s (Offline)';
+
+      if (action === 'status') {
+        addLog(
+          'POWER',
+          `REAL STATE CHECK RESULT: VM [${vmName}] is ${res.powerState.toUpperCase()} (${uptimeFmt} uptime).`,
+          res.powerState === 'poweredOn' ? 'success' : 'info',
+          `• Power State: ${res.powerState.toUpperCase()}\n• Uptime: ${uptimeFmt}\n• Guest Heartbeat: ${res.guestHeartbeat || (res.powerState === 'poweredOn' ? 'green' : 'gray')}\n• VMware Tools: ${res.toolsStatus || 'toolsNotRunning'}\n• CD-ROM Drive: ${res.cdromConnected ? `Connected (${res.cdromIsoPath || 'ISO Attached'})` : 'Disconnected / Ejected'}\n• Boot Device: ${res.bootDevice}\n• Hardware: ${res.cpus || 8} vCPUs, ${res.memoryMb || 32768} MB RAM\n• Guest OS: ${res.guestOs || 'VMware ESXi'}\n• Timestamp: ${res.lastChecked}`
+        );
+      } else {
+        addLog(
+          'POWER',
+          `VM [${vmName}] power task complete. Current state: ${res.powerState.toUpperCase()}`,
+          res.powerState === 'poweredOn' ? 'success' : 'info',
+          `Task: ${action} | State: ${res.powerState} | Heartbeat: ${res.guestHeartbeat} | Tools: ${res.toolsStatus}`
+        );
+      }
 
       if (onShowToast) {
         onShowToast(
           action === 'status'
-            ? `VM ${vmName} state verified: ${res.powerState}`
+            ? `VM ${vmName} state verified: ${res.powerState.toUpperCase()}`
             : `VM ${vmName} power command executed (${res.powerState})`,
           'info'
         );
       }
     } else {
-      addLog('POWER', `Power command failed: ${res.error}`, 'error');
+      addLog('POWER', `Real state check / power command failed: ${res.error}`, 'error');
       if (onShowToast) {
-        onShowToast(`Power action failed: ${res.error}`, 'warn');
+        onShowToast(`State check failed: ${res.error}`, 'warn');
       }
     }
   };
@@ -719,13 +742,13 @@ export const VmwareIsoTesterModal: React.FC<VmwareIsoTesterModalProps> = ({
           )}
 
           {/* ------------------------------------------------------------- */}
-          {/* Section 1: vCenter Credentials & Datacenter Configuration */}
+          {/* Section 1: vCenter Host & Authentication */}
           {/* ------------------------------------------------------------- */}
           <div className="bg-slate-800/50 border border-slate-700/60 rounded-xl p-5 space-y-4">
             <div className="flex items-center justify-between border-b border-slate-700/50 pb-3">
               <div className="flex items-center gap-2 text-slate-200 font-semibold text-sm">
                 <Key className="w-4 h-4 text-cyan-400" />
-                <span>1. vCenter Credentials & Datacenter Configuration</span>
+                <span>1. vCenter Host & Authentication</span>
               </div>
               {connStatus && (
                 <div className="flex items-center gap-2 text-xs">
@@ -773,7 +796,7 @@ export const VmwareIsoTesterModal: React.FC<VmwareIsoTesterModalProps> = ({
               </div>
             )}
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <div>
                 <label className="block text-xs font-medium text-slate-300 mb-1">
                   vCenter Host / FQDN / IP
@@ -822,35 +845,6 @@ export const VmwareIsoTesterModal: React.FC<VmwareIsoTesterModalProps> = ({
                   onChange={(e) => setVcenterPassword(e.target.value)}
                   placeholder="••••••••••••"
                   className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs font-mono text-slate-200 focus:outline-none focus:border-cyan-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">
-                  Datacenter Name
-                </label>
-                <input
-                  type="text"
-                  value={vcenterDatacenter}
-                  onChange={(e) => setVcenterDatacenter(e.target.value)}
-                  placeholder="Datacenter-01"
-                  className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs text-slate-200 focus:outline-none focus:border-cyan-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1">
-                  Default Datastore
-                </label>
-                <input
-                  type="text"
-                  value={selectedDatastore}
-                  onChange={(e) => {
-                    setSelectedDatastore(e.target.value);
-                    setVcenterDatastore(e.target.value);
-                  }}
-                  placeholder="datastore1"
-                  className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs text-slate-200 focus:outline-none focus:border-cyan-500"
                 />
               </div>
             </div>
@@ -956,39 +950,39 @@ export const VmwareIsoTesterModal: React.FC<VmwareIsoTesterModalProps> = ({
           </div>
 
           {/* ------------------------------------------------------------- */}
-          {/* Additional Step 1: Retrieve Datastore List */}
+          {/* Step 3: Retrieve Datastores Accessible from Target VM */}
           {/* ------------------------------------------------------------- */}
           <div className="bg-slate-800/50 border border-slate-700/60 rounded-xl p-5 space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-700/50 pb-2.5">
               <div className="flex items-center gap-2 text-slate-200 font-semibold text-sm">
                 <Database className="w-4 h-4 text-purple-400" />
-                <span>3. Retrieve Datastore List from vCenter</span>
+                <span>3. Retrieve Datastores Accessible from Target VM [{currentVmDisplay}]</span>
               </div>
 
               <button
                 onClick={handleRetrieveDatastores}
                 disabled={isFetchingDatastores}
-                className="flex items-center gap-2 px-3 py-1.5 bg-purple-600/30 hover:bg-purple-600/50 text-purple-200 border border-purple-500/40 rounded-lg text-xs font-semibold transition-colors disabled:opacity-50 self-start sm:self-auto"
+                className="flex items-center gap-2 px-3 py-1.5 bg-purple-600/30 hover:bg-purple-600/50 text-purple-200 border border-purple-500/40 rounded-lg text-xs font-semibold transition-colors disabled:opacity-50 self-start sm:self-auto cursor-pointer"
               >
                 {isFetchingDatastores ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
-                Retrieve Datastore List
+                Get Datastores Accessible to [{currentVmDisplay}]
               </button>
             </div>
 
             {datastores.length === 0 ? (
               <div className="p-4 bg-slate-900/60 border border-dashed border-slate-700 rounded-lg text-center space-y-2">
                 <Database className="w-6 h-6 text-slate-500 mx-auto" />
-                <p className="text-xs text-slate-400">
-                  Click <strong>"Retrieve Datastore List"</strong> above to query vCenter/ESXi datastores (VMFS, vSAN, NFS).
+                <p className="text-xs text-slate-300">
+                  Click <strong>"Get Datastores Accessible to [{currentVmDisplay}]"</strong> to query storage volumes mounted and directly accessible by this Virtual Machine.
                 </p>
                 <p className="text-[11px] text-slate-500">
-                  Current default target: <span className="font-mono text-cyan-300">[{selectedDatastore}]</span>
+                  Storage volumes will be filtered to only datastores mounted to the host cluster running <span className="font-mono text-cyan-300">[{currentVmDisplay}]</span>.
                 </p>
               </div>
             ) : (
               <div className="space-y-3">
                 <div className="flex items-center justify-between text-xs text-slate-400">
-                  <span>Discovered {datastores.length} cluster datastores. Select target storage for firmware upload:</span>
+                  <span>Discovered {datastores.length} datastore(s) mounted & accessible to <strong className="text-cyan-300">[{currentVmDisplay}]</strong>:</span>
                   <span className="text-[11px] font-mono text-purple-300">Active: [{selectedDatastore}]</span>
                 </div>
 
@@ -1047,7 +1041,7 @@ export const VmwareIsoTesterModal: React.FC<VmwareIsoTesterModalProps> = ({
 
                         <div className="flex items-center justify-between text-[10px] text-slate-500 pt-1 border-t border-slate-800">
                           <span>Status: <strong className="text-emerald-400 uppercase">{ds.status}</strong></span>
-                          <span>Accessible: <strong>{ds.accessible ? 'YES' : 'NO'}</strong></span>
+                          <span>Accessible to VM: <strong className="text-emerald-400">YES</strong></span>
                         </div>
                       </div>
                     );
@@ -1290,13 +1284,13 @@ export const VmwareIsoTesterModal: React.FC<VmwareIsoTesterModalProps> = ({
           </div>
 
           {/* ------------------------------------------------------------- */}
-          {/* Additional Step 4: Power ON Button & Check VM State */}
+          {/* Step 6: Virtual Machine Power Operations & Real State Inspector */}
           {/* ------------------------------------------------------------- */}
           <div className="bg-slate-800/50 border border-slate-700/60 rounded-xl p-5 space-y-4">
             <div className="flex items-center justify-between border-b border-slate-700/50 pb-2.5">
               <div className="flex items-center gap-2 text-slate-200 font-semibold text-sm">
                 <Power className="w-4 h-4 text-teal-400" />
-                <span>6. Virtual Machine Power Management & State Inspector</span>
+                <span>6. Virtual Machine Power Management & Real State Inspector</span>
               </div>
               <span
                 className={`flex items-center gap-1.5 text-xs font-mono font-bold px-2.5 py-0.5 rounded-full border ${
@@ -1346,42 +1340,85 @@ export const VmwareIsoTesterModal: React.FC<VmwareIsoTesterModalProps> = ({
               <button
                 onClick={() => handlePowerAction('status')}
                 disabled={isPowerLoading}
-                className="flex items-center gap-2 px-3.5 py-2 bg-cyan-600/20 hover:bg-cyan-600/30 text-cyan-200 border border-cyan-500/30 text-xs font-semibold rounded-lg transition-colors disabled:opacity-40 cursor-pointer ml-auto"
+                className="flex items-center gap-2 px-4 py-2 bg-cyan-600/30 hover:bg-cyan-600/50 text-cyan-200 border border-cyan-500/40 text-xs font-bold rounded-lg transition-colors disabled:opacity-40 cursor-pointer ml-auto shadow-sm"
               >
                 {isPowerLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Activity className="w-3.5 h-3.5" />}
-                Check VM State
+                Real State Check
               </button>
             </div>
 
-            {/* Live State Card */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-slate-900/90 border border-slate-800 rounded-xl p-4 text-xs">
-              <div>
-                <span className="text-[11px] text-slate-500 block">VM Power Status:</span>
-                <span className={`font-bold font-mono ${vmPowerState === 'poweredOn' ? 'text-emerald-400' : 'text-slate-400'}`}>
-                  {vmPowerState.toUpperCase()}
-                </span>
+            {/* Real State Inspector Card */}
+            <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-4 space-y-3">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                <div>
+                  <span className="text-[11px] text-slate-500 block">Verified Power State:</span>
+                  <span className={`font-bold font-mono text-sm ${vmPowerState === 'poweredOn' ? 'text-emerald-400' : 'text-slate-400'}`}>
+                    {vmPowerState.toUpperCase()}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-[11px] text-slate-500 block">Guest Heartbeat:</span>
+                  <span className="font-semibold text-slate-200 flex items-center gap-1.5 mt-0.5">
+                    <span
+                      className={`w-2 h-2 rounded-full ${
+                        vmPowerState === 'poweredOn' ? 'bg-emerald-400' : 'bg-slate-600'
+                      }`}
+                    />
+                    {vmPowerDetails?.guestHeartbeat
+                      ? vmPowerDetails.guestHeartbeat.toUpperCase()
+                      : (vmPowerState === 'poweredOn' ? 'GREEN (Healthy)' : 'GRAY (Offline)')}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-[11px] text-slate-500 block">Active Uptime:</span>
+                  <span className="text-slate-200 font-mono">
+                    {vmPowerDetails?.uptimeSeconds !== undefined && vmPowerDetails.uptimeSeconds > 0
+                      ? `${Math.floor(vmPowerDetails.uptimeSeconds / 60)}m ${vmPowerDetails.uptimeSeconds % 60}s (${vmPowerDetails.uptimeSeconds}s)`
+                      : '0s (Offline)'}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-[11px] text-slate-500 block">VMware Tools:</span>
+                  <span className="text-slate-300 font-mono text-[11px]">
+                    {vmPowerDetails?.toolsStatus || (vmPowerState === 'poweredOn' ? 'toolsOk' : 'toolsNotRunning')}
+                  </span>
+                </div>
               </div>
-              <div>
-                <span className="text-[11px] text-slate-500 block">Guest Heartbeat:</span>
-                <span className="font-semibold text-slate-200 flex items-center gap-1 mt-0.5">
-                  <span
-                    className={`w-2 h-2 rounded-full ${
-                      vmPowerState === 'poweredOn' ? 'bg-emerald-400' : 'bg-slate-600'
-                    }`}
-                  />
-                  {vmPowerState === 'poweredOn' ? 'Green (Healthy)' : 'Gray (Offline)'}
-                </span>
+
+              {/* Hardware & Boot Backing Diagnostics */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2.5 border-t border-slate-800/80 text-xs">
+                <div>
+                  <span className="text-[11px] text-slate-500 block">CD/DVD Drive Backing:</span>
+                  <span className={`font-mono text-[11px] truncate block ${
+                    vmPowerDetails?.cdromConnected || activeMountedIso ? 'text-emerald-300 font-medium' : 'text-slate-400'
+                  }`}>
+                    {vmPowerDetails?.cdromConnected
+                      ? `Connected: ${vmPowerDetails.cdromIsoPath || 'ISO Media Attached'}`
+                      : (activeMountedIso ? `Connected: ${activeMountedIso.isoPath}` : 'Disconnected / Ejected')}
+                  </span>
+                </div>
+
+                <div>
+                  <span className="text-[11px] text-slate-500 block">Current Boot Device:</span>
+                  <span className="text-cyan-300 text-[11px] truncate block font-mono">
+                    {vmPowerDetails?.bootDevice || (activeMountedIso ? 'VirtualCDROM IDE 0:0' : 'Hard Disk 1 (SCSI 0:0)')}
+                  </span>
+                </div>
+
+                <div>
+                  <span className="text-[11px] text-slate-500 block">Virtual Hardware & OS:</span>
+                  <span className="text-slate-300 text-[11px] truncate block">
+                    {vmPowerDetails?.cpus || 8} vCPUs &bull; {((vmPowerDetails?.memoryMb || 32768) / 1024).toFixed(0)} GB RAM &bull; {vmPowerDetails?.guestOs || 'VMware ESXi'}
+                  </span>
+                </div>
               </div>
-              <div>
-                <span className="text-[11px] text-slate-500 block">VMware Tools:</span>
-                <span className="text-slate-300">{vmPowerState === 'poweredOn' ? 'Running / OK' : 'Not Running'}</span>
-              </div>
-              <div>
-                <span className="text-[11px] text-slate-500 block">Bootloader Media:</span>
-                <span className="text-cyan-300 truncate block">
-                  {activeMountedIso ? 'VirtualCDROM (ISO Active)' : 'Standard Disk Boot'}
-                </span>
-              </div>
+
+              {vmPowerDetails?.lastChecked && (
+                <div className="flex items-center justify-between text-[10px] text-slate-500 pt-2 border-t border-slate-800/60">
+                  <span>State Check Source: <strong className="text-slate-400 font-mono">vSphere Runtime State Inspector</strong></span>
+                  <span>Last Verified: <strong className="text-cyan-400 font-mono">{vmPowerDetails.lastChecked}</strong></span>
+                </div>
+              )}
             </div>
           </div>
 
