@@ -13,6 +13,8 @@ import { DeleteConfirmModal } from './components/DeleteConfirmModal';
 import { DockerDbModal } from './components/DockerDbModal';
 import { FlushConfirmModal } from './components/FlushConfirmModal';
 import { VmwareIsoTesterModal } from './components/VmwareIsoTesterModal';
+import { ExportReportModal, ExportDataset } from './components/ExportReportModal';
+import { exportFleetToCsv, exportFleetToJson } from './utils/exportUtils';
 
 import { 
   Server, 
@@ -60,7 +62,7 @@ import {
 } from './services/api';
 
 import { createCampaign } from './utils/orchestrator';
-import { Plus, CheckCircle2, AlertTriangle, ShieldCheck } from 'lucide-react';
+import { Plus, CheckCircle2, AlertTriangle, ShieldCheck, Download, FileSpreadsheet, FileCode } from 'lucide-react';
 
 export default function App() {
   // Primary datasets
@@ -100,6 +102,15 @@ export default function App() {
   const handleOpenVmwareIsoTester = (pkg?: FirmwarePackage) => {
     setVmwareTesterInitialPackage(pkg || null);
     setIsVmwareIsoTesterOpen(true);
+  };
+
+  // Export Report Modal State
+  const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+  const [exportModalInitialDataset, setExportModalInitialDataset] = useState<ExportDataset>('fleet');
+
+  const handleOpenExportModal = (dataset: ExportDataset = 'fleet') => {
+    setExportModalInitialDataset(dataset);
+    setIsExportModalOpen(true);
   };
 
   // Wizard pre-fills
@@ -639,6 +650,7 @@ export default function App() {
         dbStatus={dbStatus}
         onOpenDockerDb={() => setIsDockerDbModalOpen(true)}
         onOpenVmwareIsoTester={() => handleOpenVmwareIsoTester()}
+        onOpenExportModal={() => handleOpenExportModal('fleet')}
       />
 
       {/* Toast Banner */}
@@ -681,25 +693,69 @@ export default function App() {
               onSelectAllVisible={setSelectedServerIds}
             />
 
-            <div className="flex items-center justify-between mb-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 mb-3">
               <div className="flex items-center space-x-2">
                 <h3 className="text-sm font-bold text-slate-900">Physical Server Inventory</h3>
                 <span className="text-xs text-slate-500 font-mono">
                   ({filteredServers.length} nodes matching filters)
                 </span>
               </div>
-              <button
-                type="button"
-                id="btn-open-add-server"
-                onClick={() => {
-                  setEditingServer(null);
-                  setIsDeviceModalOpen(true);
-                }}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold shadow-xs transition-colors"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Register Server Node</span>
-              </button>
+              
+              <div className="flex items-center flex-wrap gap-2">
+                <button
+                  type="button"
+                  id="btn-export-fleet-csv"
+                  onClick={() => {
+                    const dateStr = new Date().toISOString().split('T')[0];
+                    exportFleetToCsv(filteredServers, `fleet_inventory_${dateStr}.csv`);
+                    showToast(`Exported ${filteredServers.length} nodes to CSV`, 'success');
+                  }}
+                  title="Export currently displayed servers to CSV spreadsheet"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold shadow-xs transition-colors"
+                >
+                  <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>Export CSV</span>
+                </button>
+
+                <button
+                  type="button"
+                  id="btn-export-fleet-json"
+                  onClick={() => {
+                    const dateStr = new Date().toISOString().split('T')[0];
+                    exportFleetToJson(filteredServers, `fleet_inventory_${dateStr}.json`);
+                    showToast(`Exported ${filteredServers.length} nodes to JSON`, 'success');
+                  }}
+                  title="Export currently displayed servers to JSON dataset"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold shadow-xs transition-colors"
+                >
+                  <FileCode className="w-3.5 h-3.5 text-indigo-600" />
+                  <span>Export JSON</span>
+                </button>
+
+                <button
+                  type="button"
+                  id="btn-open-export-modal-fleet"
+                  onClick={() => handleOpenExportModal('fleet')}
+                  title="Configure report scope and download format"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-indigo-700 text-xs font-semibold shadow-xs transition-colors"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Export Report...</span>
+                </button>
+
+                <button
+                  type="button"
+                  id="btn-open-add-server"
+                  onClick={() => {
+                    setEditingServer(null);
+                    setIsDeviceModalOpen(true);
+                  }}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-xs transition-colors"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Register Server Node</span>
+                </button>
+              </div>
             </div>
 
             <ServerList
@@ -774,7 +830,11 @@ export default function App() {
         )}
 
         {activeTab === 'audit' && (
-          <AuditHistoryView auditLogs={auditLogs} />
+          <AuditHistoryView 
+            auditLogs={auditLogs} 
+            onOpenExportModal={handleOpenExportModal}
+            onShowToast={showToast}
+          />
         )}
       </main>
 
@@ -891,6 +951,18 @@ export default function App() {
         }}
         packages={packages}
         initialPackage={vmwareTesterInitialPackage}
+        onShowToast={showToast}
+      />
+
+      {/* Export Reports & Offline Compliance Modal */}
+      <ExportReportModal
+        isOpen={isExportModalOpen}
+        onClose={() => setIsExportModalOpen(false)}
+        allServers={servers}
+        filteredServers={filteredServers}
+        selectedServerIds={selectedServerIds}
+        allAuditLogs={auditLogs}
+        initialDataset={exportModalInitialDataset}
         onShowToast={showToast}
       />
     </div>

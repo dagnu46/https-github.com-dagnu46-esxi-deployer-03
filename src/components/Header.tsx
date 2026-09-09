@@ -12,7 +12,8 @@ import {
   Terminal,
   Database,
   Trash2,
-  Disc
+  Disc,
+  Download
 } from 'lucide-react';
 import { UpgradeCampaign } from '../types';
 import { DatabaseStatus } from '../services/api';
@@ -31,6 +32,7 @@ interface HeaderProps {
   dbStatus?: DatabaseStatus | null;
   onOpenDockerDb?: () => void;
   onOpenVmwareIsoTester?: () => void;
+  onOpenExportModal?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -45,6 +47,7 @@ export const Header: React.FC<HeaderProps> = ({
   dbStatus,
   onOpenDockerDb,
   onOpenVmwareIsoTester,
+  onOpenExportModal,
 }) => {
   const isCampaignActive = activeCampaign && (activeCampaign.status === 'running' || activeCampaign.status === 'paused');
   const completedServers = activeCampaign ? activeCampaign.servers.filter(s => s.stage === 'completed').length : 0;
@@ -153,6 +156,19 @@ export const Header: React.FC<HeaderProps> = ({
               >
                 <Trash2 className="w-3.5 h-3.5" />
                 <span>Flush All</span>
+              </button>
+            )}
+
+            {onOpenExportModal && (
+              <button
+                type="button"
+                id="btn-header-export-report"
+                onClick={onOpenExportModal}
+                title="Export fleet inventory and audit logs into CSV or JSON"
+                className="px-2.5 py-1.5 rounded-lg text-xs font-medium text-slate-700 hover:text-slate-900 hover:bg-slate-100 border border-slate-200 transition-colors flex items-center gap-1.5"
+              >
+                <Download className="w-3.5 h-3.5 text-indigo-600" />
+                <span>Export Reports</span>
               </button>
             )}
 

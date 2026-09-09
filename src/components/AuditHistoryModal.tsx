@@ -9,15 +9,25 @@ import {
   Filter,
   ArrowRight,
   Clock,
-  User
+  User,
+  FileSpreadsheet,
+  FileCode,
+  SlidersHorizontal
 } from 'lucide-react';
 import { AuditRecord, ComponentType } from '../types';
+import { exportAuditLogsToCsv, exportAuditLogsToJson } from '../utils/exportUtils';
 
 interface AuditHistoryViewProps {
   auditLogs: AuditRecord[];
+  onOpenExportModal?: (initialDataset: 'audit') => void;
+  onShowToast?: (message: string, type?: 'success' | 'info' | 'warn') => void;
 }
 
-export const AuditHistoryView: React.FC<AuditHistoryViewProps> = ({ auditLogs }) => {
+export const AuditHistoryView: React.FC<AuditHistoryViewProps> = ({ 
+  auditLogs,
+  onOpenExportModal,
+  onShowToast
+}) => {
   const [search, setSearch] = useState('');
   const [componentFilter, setComponentFilter] = useState('all');
 
@@ -30,29 +40,20 @@ export const AuditHistoryView: React.FC<AuditHistoryViewProps> = ({ auditLogs })
     return matchesSearch && matchesComp;
   });
 
-  const exportToCsv = () => {
-    const headers = ['ID', 'Timestamp', 'Server', 'Component', 'From Version', 'To Version', 'Status', 'Operator', 'Duration (s)', 'Firmware Package'];
-    const rows = filteredLogs.map(l => [
-      l.id,
-      l.timestamp,
-      l.serverHostname,
-      l.component,
-      l.fromVersion,
-      l.toVersion,
-      l.status,
-      l.operator,
-      l.durationSeconds,
-      `"${l.firmwarePackageName}"`,
-    ]);
+  const handleExportCsv = () => {
+    const dateStr = new Date().toISOString().split('T')[0];
+    exportAuditLogsToCsv(filteredLogs, `firmware_audit_logs_${dateStr}.csv`);
+    if (onShowToast) {
+      onShowToast(`Exported ${filteredLogs.length} audit records to CSV`, 'success');
+    }
+  };
 
-    const csvContent = 'data:text/csv;charset=utf-8,' + [headers.join(','), ...rows.map(e => e.join(','))].join('\n');
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `firmware_upgrade_audit_${new Date().toISOString().split('T')[0]}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+  const handleExportJson = () => {
+    const dateStr = new Date().toISOString().split('T')[0];
+    exportAuditLogsToJson(filteredLogs, `firmware_audit_logs_${dateStr}.json`);
+    if (onShowToast) {
+      onShowToast(`Exported ${filteredLogs.length} audit records to JSON`, 'success');
+    }
   };
 
   const formatDuration = (seconds: number) => {
@@ -75,15 +76,42 @@ export const AuditHistoryView: React.FC<AuditHistoryViewProps> = ({ auditLogs })
           </p>
         </div>
 
-        <button
-          type="button"
-          id="btn-export-csv"
-          onClick={exportToCsv}
-          className="inline-flex items-center gap-1.5 px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-semibold shadow-xs transition-colors"
-        >
-          <Download className="w-4 h-4" />
-          <span>Export Audit Log (CSV)</span>
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            id="btn-export-audit-csv"
+            onClick={handleExportCsv}
+            title="Download audit logs as CSV spreadsheet"
+            className="inline-flex items-center gap-1.5 px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 rounded-lg text-xs font-semibold shadow-xs transition-colors"
+          >
+            <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
+            <span>Export CSV</span>
+          </button>
+
+          <button
+            type="button"
+            id="btn-export-audit-json"
+            onClick={handleExportJson}
+            title="Download audit logs as JSON dataset"
+            className="inline-flex items-center gap-1.5 px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 border border-slate-300 rounded-lg text-xs font-semibold shadow-xs transition-colors"
+          >
+            <FileCode className="w-3.5 h-3.5 text-indigo-600" />
+            <span>Export JSON</span>
+          </button>
+
+          {onOpenExportModal && (
+            <button
+              type="button"
+              id="btn-open-export-modal-audit"
+              onClick={() => onOpenExportModal('audit')}
+              title="Open full reporting and compliance export dialog"
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold shadow-xs transition-colors"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>Export Report...</span>
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Filter toolbar */}
