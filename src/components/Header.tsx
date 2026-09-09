@@ -10,7 +10,8 @@ import {
   CheckCircle2, 
   AlertTriangle, 
   Terminal,
-  Database
+  Database,
+  Trash2
 } from 'lucide-react';
 import { UpgradeCampaign } from '../types';
 import { DatabaseStatus } from '../services/api';
@@ -23,6 +24,7 @@ interface HeaderProps {
   activeCampaign: UpgradeCampaign | null;
   onOpenUpgradeWizard: () => void;
   onResetDemo: () => void;
+  onOpenFlushConfirm?: () => void;
   totalServers: number;
   criticalCount: number;
   dbStatus?: DatabaseStatus | null;
@@ -35,6 +37,7 @@ export const Header: React.FC<HeaderProps> = ({
   activeCampaign,
   onOpenUpgradeWizard,
   onResetDemo,
+  onOpenFlushConfirm,
   totalServers,
   criticalCount,
   dbStatus,
@@ -123,6 +126,19 @@ export const Header: React.FC<HeaderProps> = ({
               <RotateCcw className="w-3.5 h-3.5 text-slate-500" />
               <span>Reset Demo</span>
             </button>
+
+            {onOpenFlushConfirm && (
+              <button
+                type="button"
+                id="btn-flush-all-entries"
+                onClick={onOpenFlushConfirm}
+                title="Flush and clear all entries across fleet, packages, and database"
+                className="px-2.5 py-1.5 rounded-lg text-xs font-medium text-rose-600 hover:text-rose-700 hover:bg-rose-50 border border-rose-200 transition-colors flex items-center gap-1.5"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Flush All</span>
+              </button>
+            )}
 
             <button
               type="button"

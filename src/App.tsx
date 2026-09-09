@@ -11,6 +11,7 @@ import { UpgradeWizardModal } from './components/UpgradeWizardModal';
 import { DeviceModal } from './components/DeviceModal';
 import { DeleteConfirmModal } from './components/DeleteConfirmModal';
 import { DockerDbModal } from './components/DockerDbModal';
+import { FlushConfirmModal } from './components/FlushConfirmModal';
 
 import { 
   Server, 
@@ -34,13 +35,15 @@ import {
   saveBaseline, 
   loadActiveCampaign, 
   saveActiveCampaign, 
-  resetToDemoFleet 
+  resetToDemoFleet,
+  flushAllStorage
 } from './utils/storage';
 
 import {
   getDbStatus,
   DatabaseStatus,
   reseedDb,
+  flushDb,
   syncLoadServers,
   syncSaveServer,
   syncDeleteServer,
@@ -87,6 +90,7 @@ export default function App() {
   const [isDeviceModalOpen, setIsDeviceModalOpen] = useState(false);
   const [editingServer, setEditingServer] = useState<Server | null>(null);
   const [deletingServer, setDeletingServer] = useState<Server | null>(null);
+  const [isFlushConfirmOpen, setIsFlushConfirmOpen] = useState(false);
 
   // Wizard pre-fills
   const [wizardPreSelectedServers, setWizardPreSelectedServers] = useState<string[]>([]);
@@ -423,6 +427,27 @@ export default function App() {
     }
   };
 
+  // Flush all entries across fleet, packages, audit logs, and campaigns
+  const handleFlushAll = async () => {
+    flushAllStorage();
+    setServers([]);
+    setPackages([]);
+    setAuditLogs([]);
+    setActiveCampaign(null);
+    setSelectedServerIds([]);
+    setInspectedServer(null);
+
+    if (dbStatus?.connected) {
+      try {
+        await flushDb();
+        await refreshDbStatus();
+      } catch (err) {
+        console.warn('Backend flush warning:', err);
+      }
+    }
+    showToast('All server inventory, firmware packages, and audit entries have been flushed.', 'info');
+  };
+
   // Quick upgrade from server list
   const handleQuickUpgrade = (server: Server, component: ComponentType) => {
     setWizardPreSelectedServers([server.id]);
@@ -598,6 +623,7 @@ export default function App() {
           setIsWizardOpen(true);
         }}
         onResetDemo={handleResetDemo}
+        onOpenFlushConfirm={() => setIsFlushConfirmOpen(true)}
         totalServers={servers.length}
         criticalCount={criticalCount}
         dbStatus={dbStatus}
@@ -683,6 +709,11 @@ export default function App() {
                 setIsDeviceModalOpen(true);
               }}
               onDeleteServer={server => setDeletingServer(server)}
+              onEnrollNewServer={() => {
+                setEditingServer(null);
+                setIsDeviceModalOpen(true);
+              }}
+              onResetDemo={handleResetDemo}
             />
           </div>
         )}
@@ -764,6 +795,7 @@ export default function App() {
         onClose={() => setIsDockerDbModalOpen(false)}
         status={dbStatus}
         onRefreshStatus={refreshDbStatus}
+        onFlushAll={() => setIsFlushConfirmOpen(true)}
         onDatabaseReseeded={async () => {
           const [sRes, pRes, aRes, bRes] = await Promise.all([
             syncLoadServers(),
@@ -828,6 +860,14 @@ export default function App() {
         server={deletingServer}
         onClose={() => setDeletingServer(null)}
         onConfirmDelete={handleDeleteServer}
+      />
+
+      {/* Flush All Data Confirmation Modal */}
+      <FlushConfirmModal
+        isOpen={isFlushConfirmOpen}
+        onClose={() => setIsFlushConfirmOpen(false)}
+        onConfirmFlush={handleFlushAll}
+        isDbConnected={dbStatus?.connected}
       />
     </div>
   );

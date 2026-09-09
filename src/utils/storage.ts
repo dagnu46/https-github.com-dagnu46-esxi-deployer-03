@@ -7,16 +7,50 @@ const STORAGE_KEYS = {
   AUDIT_LOGS: 'sfm_audit_v1',
   BASELINE: 'sfm_baseline_v1',
   CAMPAIGN: 'sfm_campaign_v1',
+  FLUSHED: 'sfm_flushed_v1',
 };
+
+export function isStorageFlushed(): boolean {
+  try {
+    const val = localStorage.getItem(STORAGE_KEYS.FLUSHED);
+    // If explicitly marked false, it's not flushed. Otherwise default to true (flushed as requested).
+    return val !== 'false';
+  } catch {
+    return true;
+  }
+}
+
+export function flushAllStorage(): void {
+  try {
+    localStorage.setItem(STORAGE_KEYS.FLUSHED, 'true');
+    localStorage.setItem(STORAGE_KEYS.SERVERS, JSON.stringify([]));
+    localStorage.setItem(STORAGE_KEYS.FIRMWARE_PACKAGES, JSON.stringify([]));
+    localStorage.setItem(STORAGE_KEYS.AUDIT_LOGS, JSON.stringify([]));
+    localStorage.removeItem(STORAGE_KEYS.CAMPAIGN);
+  } catch (e) {
+    console.error('Failed to flush storage', e);
+  }
+}
 
 export function loadServers(): Server[] {
   try {
+    if (isStorageFlushed()) {
+      const raw = localStorage.getItem(STORAGE_KEYS.SERVERS);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) return parsed;
+      }
+      return [];
+    }
+
     const raw = localStorage.getItem(STORAGE_KEYS.SERVERS);
     if (!raw) {
-      saveServers(INITIAL_SERVERS);
-      return INITIAL_SERVERS;
+      return [];
     }
     const parsed: Server[] = JSON.parse(raw);
+    if (Array.isArray(parsed) && parsed.length === 0) {
+      return [];
+    }
 
     // If existing cached data was from an older template lacking HP or LENOVO or Xen Server, refresh to the rich fleet
     const hasHp = parsed.some(s => s.vendor === 'HP' || s.model?.includes('HPE') || s.model?.includes('HP'));
@@ -111,15 +145,24 @@ export function saveServers(servers: Server[]): void {
 
 export function loadFirmwarePackages(): FirmwarePackage[] {
   try {
+    if (isStorageFlushed()) {
+      const raw = localStorage.getItem(STORAGE_KEYS.FIRMWARE_PACKAGES);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) return parsed;
+      }
+      return [];
+    }
     const raw = localStorage.getItem(STORAGE_KEYS.FIRMWARE_PACKAGES);
     if (!raw) {
-      saveFirmwarePackages(INITIAL_FIRMWARE_PACKAGES);
-      return INITIAL_FIRMWARE_PACKAGES;
+      return [];
     }
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed) && parsed.length === 0) return [];
+    return parsed;
   } catch (e) {
     console.error('Failed to parse firmware packages', e);
-    return INITIAL_FIRMWARE_PACKAGES;
+    return [];
   }
 }
 
@@ -133,15 +176,24 @@ export function saveFirmwarePackages(packages: FirmwarePackage[]): void {
 
 export function loadAuditLogs(): AuditRecord[] {
   try {
+    if (isStorageFlushed()) {
+      const raw = localStorage.getItem(STORAGE_KEYS.AUDIT_LOGS);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) return parsed;
+      }
+      return [];
+    }
     const raw = localStorage.getItem(STORAGE_KEYS.AUDIT_LOGS);
     if (!raw) {
-      saveAuditLogs(INITIAL_AUDIT_LOGS);
-      return INITIAL_AUDIT_LOGS;
+      return [];
     }
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed) && parsed.length === 0) return [];
+    return parsed;
   } catch (e) {
     console.error('Failed to parse audit logs', e);
-    return INITIAL_AUDIT_LOGS;
+    return [];
   }
 }
 
@@ -203,6 +255,11 @@ export function resetToDemoFleet(): {
   auditLogs: AuditRecord[];
   baseline: BaselineConfig;
 } {
+  try {
+    localStorage.setItem(STORAGE_KEYS.FLUSHED, 'false');
+  } catch (e) {
+    console.error(e);
+  }
   saveServers(INITIAL_SERVERS);
   saveFirmwarePackages(INITIAL_FIRMWARE_PACKAGES);
   saveAuditLogs(INITIAL_AUDIT_LOGS);

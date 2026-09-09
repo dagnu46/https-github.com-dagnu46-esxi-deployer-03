@@ -18,6 +18,7 @@ import {
   upsertCampaign,
   getDetailedStats,
   seedInitialData,
+  flushAllData,
   getDatabaseConfig
 } from './src/server/db';
 
@@ -93,6 +94,27 @@ async function startServer() {
       await seedInitialData();
       const stats = await getDetailedStats();
       res.json({ success: true, message: 'Database successfully re-seeded.', stats });
+    } catch (e: any) {
+      res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
+  // Flush all Database tables and entries
+  app.post('/api/db/flush', async (req, res) => {
+    try {
+      await flushAllData();
+      const stats = await getDetailedStats();
+      res.json({ success: true, message: 'All database entries successfully flushed.', stats });
+    } catch (e: any) {
+      res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
+  app.delete('/api/db/flush', async (req, res) => {
+    try {
+      await flushAllData();
+      const stats = await getDetailedStats();
+      res.json({ success: true, message: 'All database entries successfully flushed.', stats });
     } catch (e: any) {
       res.status(500).json({ success: false, error: e.message });
     }

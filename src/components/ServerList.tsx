@@ -14,7 +14,8 @@ import {
   Edit,
   Trash2,
   MapPin,
-  Globe
+  Globe,
+  RotateCcw
 } from 'lucide-react';
 import { Server, ComponentType, ComponentFirmware } from '../types';
 
@@ -27,6 +28,8 @@ interface ServerListProps {
   onQuickUpgrade: (server: Server, component: ComponentType) => void;
   onEditServer?: (server: Server) => void;
   onDeleteServer?: (server: Server) => void;
+  onEnrollNewServer?: () => void;
+  onResetDemo?: () => void;
 }
 
 export const ServerList: React.FC<ServerListProps> = ({
@@ -38,6 +41,8 @@ export const ServerList: React.FC<ServerListProps> = ({
   onQuickUpgrade,
   onEditServer,
   onDeleteServer,
+  onEnrollNewServer,
+  onResetDemo,
 }) => {
   const allVisibleSelected = servers.length > 0 && servers.every(s => selectedServerIds.includes(s.id));
   const someVisibleSelected = servers.some(s => selectedServerIds.includes(s.id)) && !allVisibleSelected;
@@ -159,7 +164,45 @@ export const ServerList: React.FC<ServerListProps> = ({
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-200 bg-white">
-            {servers.map(server => {
+            {servers.length === 0 ? (
+              <tr>
+                <td colSpan={7} className="px-6 py-16 text-center">
+                  <div className="max-w-md mx-auto space-y-3">
+                    <div className="w-12 h-12 rounded-xl bg-slate-100 flex items-center justify-center text-slate-400 mx-auto">
+                      <ServerIcon className="w-6 h-6" />
+                    </div>
+                    <h4 className="text-sm font-bold text-slate-800">All Server Inventory Entries Are Flushed</h4>
+                    <p className="text-xs text-slate-500">
+                      There are currently no server nodes in the inventory. You can enroll new server nodes manually or restore the datacenter sample fleet.
+                    </p>
+                    <div className="flex items-center justify-center gap-3 pt-2">
+                      {onEnrollNewServer && (
+                        <button
+                          type="button"
+                          id="btn-empty-enroll-server"
+                          onClick={onEnrollNewServer}
+                          className="px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-xs flex items-center gap-1.5"
+                        >
+                          <span>+ Enroll Server Node</span>
+                        </button>
+                      )}
+                      {onResetDemo && (
+                        <button
+                          type="button"
+                          id="btn-empty-reseed-demo"
+                          onClick={onResetDemo}
+                          className="px-3.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold flex items-center gap-1.5 border border-slate-200"
+                        >
+                          <RotateCcw className="w-3.5 h-3.5" />
+                          <span>Re-seed Demo Fleet</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </td>
+              </tr>
+            ) : (
+              servers.map(server => {
               const isSelected = selectedServerIds.includes(server.id);
 
               const componentList = Object.values(server.components) as ComponentFirmware[];
@@ -405,7 +448,8 @@ export const ServerList: React.FC<ServerListProps> = ({
                   </td>
                 </tr>
               );
-            })}
+            })
+          )}
           </tbody>
         </table>
       </div>

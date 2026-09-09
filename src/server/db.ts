@@ -199,8 +199,10 @@ export async function initializeSchema(): Promise<boolean> {
     // Check if initial seed is needed
     const serverCountRes = await currentPool.query('SELECT count(*) as count FROM servers');
     const serverCount = parseInt(serverCountRes.rows[0]?.count || '0', 10);
+    const flushCheckRes = await currentPool.query("SELECT value FROM app_settings WHERE key = 'fleet_flushed'");
+    const isFlushed = flushCheckRes.rows[0]?.value === true;
 
-    if (serverCount === 0) {
+    if (serverCount === 0 && !isFlushed) {
       console.log('[PostgreSQL] Database tables are empty. Auto-seeding initial fleet data...');
       await seedInitialData();
     }
@@ -352,7 +354,33 @@ export async function seedInitialData(): Promise<void> {
     DEFAULT_BASELINE.enforceSecurityPatches,
   ]);
 
+  // Reset flushed flag
+  await currentPool.query(`
+    INSERT INTO app_settings (key, value)
+    VALUES ('fleet_flushed', 'false'::jsonb)
+    ON CONFLICT (key) DO UPDATE SET value = 'false'::jsonb, updated_at = NOW()
+  `);
+
   console.log('[PostgreSQL] Seed completed successfully.');
+}
+
+export async function flushAllData(): Promise<void> {
+  const currentPool = initPool();
+  try {
+    await currentPool.query(`
+      DELETE FROM servers;
+      DELETE FROM firmware_packages;
+      DELETE FROM audit_records;
+      DELETE FROM campaigns;
+      INSERT INTO app_settings (key, value)
+      VALUES ('fleet_flushed', 'true'::jsonb)
+      ON CONFLICT (key) DO UPDATE SET value = 'true'::jsonb, updated_at = NOW();
+    `);
+    console.log('[PostgreSQL] All database entries successfully flushed.');
+  } catch (err: any) {
+    console.error('[PostgreSQL] Failed to flush database:', err.message);
+    throw err;
+  }
 }
 
 // -------------------------------------------------------------

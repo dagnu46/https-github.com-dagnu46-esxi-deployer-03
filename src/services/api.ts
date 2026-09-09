@@ -58,6 +58,16 @@ export async function reseedDb(): Promise<{ success: boolean; message?: string; 
   }
 }
 
+export async function flushDb(): Promise<{ success: boolean; message?: string; error?: string }> {
+  try {
+    const res = await fetch('/api/db/flush', { method: 'POST' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+}
+
 // -------------------------------------------------------------
 // Data synchronization with PostgreSQL + local fallback
 // -------------------------------------------------------------

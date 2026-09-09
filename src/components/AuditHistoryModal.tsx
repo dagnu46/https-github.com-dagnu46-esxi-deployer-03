@@ -146,7 +146,16 @@ export const AuditHistoryView: React.FC<AuditHistoryViewProps> = ({ auditLogs })
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-200 bg-white">
-              {filteredLogs.map(log => (
+              {filteredLogs.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="px-6 py-12 text-center text-slate-500">
+                    <History className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+                    <p className="text-xs font-semibold text-slate-700">No audit records found</p>
+                    <p className="text-[11px] text-slate-400 mt-0.5">All audit log entries have been flushed.</p>
+                  </td>
+                </tr>
+              ) : (
+                filteredLogs.map(log => (
                 <tr key={log.id} className="hover:bg-slate-50/80 transition-colors">
                   <td className="px-4 py-3.5 font-mono text-slate-600 whitespace-nowrap">
                     {log.timestamp}
@@ -192,7 +201,8 @@ export const AuditHistoryView: React.FC<AuditHistoryViewProps> = ({ auditLogs })
                     )}
                   </td>
                 </tr>
-              ))}
+              ))
+            )}
             </tbody>
           </table>
         </div>

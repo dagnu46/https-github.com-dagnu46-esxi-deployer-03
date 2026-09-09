@@ -15,7 +15,8 @@ import {
   Code2,
   FileCode,
   CheckCircle2,
-  HardDrive
+  HardDrive,
+  Trash2
 } from 'lucide-react';
 import { DatabaseStatus, testDbConnection, reseedDb } from '../services/api';
 
@@ -25,6 +26,7 @@ interface DockerDbModalProps {
   status: DatabaseStatus | null;
   onRefreshStatus: () => void;
   onDatabaseReseeded: () => void;
+  onFlushAll?: () => void;
 }
 
 const DOCKER_COMPOSE_SNIPPET = `version: '3.8'
@@ -106,6 +108,7 @@ export const DockerDbModal: React.FC<DockerDbModalProps> = ({
   status,
   onRefreshStatus,
   onDatabaseReseeded,
+  onFlushAll,
 }) => {
   const [activeTab, setActiveTab] = useState<'status' | 'compose' | 'dockerfile' | 'sql'>('status');
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
@@ -349,6 +352,20 @@ export const DockerDbModal: React.FC<DockerDbModalProps> = ({
                       <RefreshCw className={`w-3.5 h-3.5 ${isReseeding ? 'animate-spin' : ''}`} />
                       <span>Re-seed Fleet</span>
                     </button>
+                    {onFlushAll && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          onClose();
+                          onFlushAll();
+                        }}
+                        className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 flex items-center gap-1.5 transition-colors"
+                        title="Purge all tables in database"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Flush Tables</span>
+                      </button>
+                    )}
                   </div>
                 </div>
 
