@@ -178,6 +178,44 @@ export interface FirmwarePackage {
   fileName: string;
   packageFormat?: 'ISO' | 'BIN' | 'FWPKG' | 'ZIP' | 'EXE';
   dependencies?: ComponentDependency[];
+  storedPathOnServer?: string;
+  relativeServerPath?: string;
+  verifiedOnDisk?: boolean;
+  fileSizeBytes?: number;
+  verifiedAt?: string;
+  diskPermissions?: string;
+  diskMd5?: string;
+}
+
+export interface DiskVerificationResult {
+  success: boolean;
+  exists: boolean;
+  fileName: string;
+  storedPathOnServer?: string;
+  relativeServerPath?: string;
+  fileSizeBytes?: number;
+  fileSizeMb?: number;
+  sha256?: string;
+  md5?: string;
+  permissions?: string;
+  createdAt?: string;
+  modifiedAt?: string;
+  message?: string;
+  error?: string;
+  searchedPaths?: string[];
+}
+
+export interface ServerStorageFile {
+  fileName: string;
+  storedPathOnServer: string;
+  relativeServerPath: string;
+  fileSizeBytes: number;
+  fileSizeMb: number;
+  sha256: string;
+  md5?: string;
+  permissions?: string;
+  modifiedAt: string;
+  folder: 'firmware' | 'datastores';
 }
 
 export interface UpgradeJobServerProgress {
@@ -231,6 +269,7 @@ export interface BaselineConfig {
     [key in ComponentType]?: string; // version required
   };
   enforceSecurityPatches: boolean;
+  updatedAt?: string;
 }
 
 export interface VmwareVcenterConfig {

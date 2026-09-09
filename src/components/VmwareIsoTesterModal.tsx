@@ -1437,6 +1437,43 @@ export const VmwareIsoTesterModal: React.FC<VmwareIsoTesterModalProps> = ({
                 </div>
               </div>
             )}
+
+            {/* vCenter Task Generation & Visibility Diagnostics (Answers User Question) */}
+            <div className="p-4 bg-slate-950/90 border border-slate-700/80 rounded-xl space-y-2.5 text-xs">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 text-amber-300 font-bold">
+                  <Info className="w-4 h-4 text-amber-400" />
+                  <span>vCenter Task Visibility: Why tasks might not appear in VMware Recent Tasks</span>
+                </div>
+                {mountResult?.whyNoTaskDiagnostic && (
+                  <span className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold ${
+                    mountResult.whyNoTaskDiagnostic.realTaskStatus === 'created'
+                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                      : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                  }`}>
+                    Mode: {mountResult.whyNoTaskDiagnostic.reason}
+                  </span>
+                )}
+              </div>
+
+              {mountResult?.whyNoTaskDiagnostic ? (
+                <div className="space-y-2 text-slate-300 text-[11px] leading-relaxed">
+                  <p>
+                    <strong className="text-slate-100">Current Diagnostic:</strong> {mountResult.whyNoTaskDiagnostic.explanation}
+                  </p>
+                  <div className="p-2.5 bg-slate-900 rounded-lg border border-slate-800 text-cyan-300 font-mono text-[10.5px]">
+                    💡 <strong>Action Required:</strong> {mountResult.whyNoTaskDiagnostic.resolution}
+                  </div>
+                </div>
+              ) : (
+                <p className="text-slate-400 text-[11px] leading-relaxed">
+                  When mounting ISOs, VMware vCenter only creates a visible <code className="text-cyan-300 font-mono bg-slate-900 px-1 py-0.5 rounded">ReconfigVM_Task</code> if:
+                  (1) <strong className="text-slate-200">"Simulate Lab Environment"</strong> is unchecked,
+                  (2) The server can route to your vCenter's network without firewall drops, and
+                  (3) The ISO has been transferred to an <strong className="text-slate-200">ESXi Datastore</strong> (Step 4 above), as ESXi hosts cannot read media from the web server's local filesystem.
+                </p>
+              )}
+            </div>
           </div>
 
           {/* ------------------------------------------------------------- */}

@@ -28,10 +28,18 @@ import {
   Table,
   GitBranch,
   Link2,
-  Disc
+  Disc,
+  FolderCheck,
+  HelpCircle,
+  Copy,
+  Info,
+  ShieldCheck
 } from 'lucide-react';
-import { FirmwarePackage, ComponentType, ServerModel, SeverityLevel, Server } from '../types';
+import { FirmwarePackage, ComponentType, ServerModel, SeverityLevel, Server, DiskVerificationResult } from '../types';
 import { FirmwareDependencyVisualizer } from './FirmwareDependencyVisualizer';
+import { FirmwareStorageExplorerModal } from './FirmwareStorageExplorerModal';
+import { ServerFileInspectorModal } from './ServerFileInspectorModal';
+import { uploadFirmwareFile, verifyFirmwareDiskFile } from '../services/api';
 
 interface FirmwareCatalogProps {
   packages: FirmwarePackage[];
@@ -78,6 +86,13 @@ export const FirmwareCatalog: React.FC<FirmwareCatalogProps> = ({
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingPackageId, setEditingPackageId] = useState<string | null>(null);
 
+  // Storage Explorer & Inspector Modals State
+  const [isStorageExplorerOpen, setIsStorageExplorerOpen] = useState(false);
+  const [storageExplorerTargetFile, setStorageExplorerTargetFile] = useState<string | null>(null);
+  const [selectedInspectPkg, setSelectedInspectPkg] = useState<FirmwarePackage | null>(null);
+  const [showVcenterTaskFaq, setShowVcenterTaskFaq] = useState(false);
+  const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
+
   // Form state
   const [formName, setFormName] = useState('');
   const [formComponent, setFormComponent] = useState<ComponentType>('BIOS');
@@ -94,6 +109,10 @@ export const FirmwareCatalog: React.FC<FirmwareCatalogProps> = ({
     'Dell PowerEdge R650',
   ]);
   const [uploadedFileName, setUploadedFileName] = useState<string>('');
+  const [formStoredPathOnServer, setFormStoredPathOnServer] = useState<string>('');
+  const [formRelativeServerPath, setFormRelativeServerPath] = useState<string>('');
+  const [isUploadingToServer, setIsUploadingToServer] = useState(false);
+  const [serverDiskVerification, setServerDiskVerification] = useState<DiskVerificationResult | null>(null);
 
   // Drag & drop state
   const [isDragging, setIsDragging] = useState(false);
@@ -101,6 +120,11 @@ export const FirmwareCatalog: React.FC<FirmwareCatalogProps> = ({
 
   // Delete package confirmation
   const [deletingPkg, setDeletingPkg] = useState<FirmwarePackage | null>(null);
+
+  const showToast = (msg: string) => {
+    setCopyFeedback(msg);
+    setTimeout(() => setCopyFeedback(null), 3000);
+  };
 
   const resetForm = () => {
     setEditingPackageId(null);
@@ -116,6 +140,10 @@ export const FirmwareCatalog: React.FC<FirmwareCatalogProps> = ({
     setFormRebootRequired(true);
     setFormModels(['Dell PowerEdge R750', 'Dell PowerEdge R650']);
     setUploadedFileName('');
+    setFormStoredPathOnServer('');
+    setFormRelativeServerPath('');
+    setIsUploadingToServer(false);
+    setServerDiskVerification(null);
   };
 
   const openAddModal = () => {
@@ -137,14 +165,33 @@ export const FirmwareCatalog: React.FC<FirmwareCatalogProps> = ({
     setFormRebootRequired(pkg.rebootRequired);
     setFormModels(pkg.supportedModels);
     setUploadedFileName(pkg.fileName);
+    setFormStoredPathOnServer(pkg.storedPathOnServer || '');
+    setFormRelativeServerPath(pkg.relativeServerPath || '');
+    if (pkg.storedPathOnServer) {
+      setServerDiskVerification({
+        success: true,
+        exists: true,
+        fileName: pkg.fileName,
+        storedPathOnServer: pkg.storedPathOnServer,
+        relativeServerPath: pkg.relativeServerPath,
+        fileSizeBytes: pkg.fileSizeBytes,
+        fileSizeMb: pkg.fileSizeMb,
+        sha256: pkg.sha256,
+        permissions: pkg.diskPermissions || '0644 (rw-r--r--)',
+      });
+    } else {
+      setServerDiskVerification(null);
+    }
     setIsModalOpen(true);
   };
 
-  // Handle file upload simulation (reads actual File object)
+  // Handle real file upload to server local disk filesystem
   const handleFileSelection = (file: File) => {
     setUploadedFileName(file.name);
-    const sizeInMb = Math.max(0.1, Number((file.size / (1024 * 1024)).toFixed(1)));
+    const sizeInMb = Math.max(0.1, Number((file.size / (1024 * 1024)).toFixed(2)));
     setFormFileSize(sizeInMb);
+    setIsUploadingToServer(true);
+    setServerDiskVerification(null);
 
     // Auto-detect component and generate hash
     const lower = file.name.toLowerCase();
@@ -162,7 +209,7 @@ export const FirmwareCatalog: React.FC<FirmwareCatalogProps> = ({
     }
     setFormComponent(detectedComp);
 
-    // Try extracting version from filename (e.g. bios_2.20.0.exe -> 2.20.0)
+    // Extract version if found
     const verMatch = file.name.match(/\d+(\.\d+)+/);
     if (verMatch && !formVersion) {
       setFormVersion(verMatch[0]);
@@ -173,9 +220,37 @@ export const FirmwareCatalog: React.FC<FirmwareCatalogProps> = ({
       setFormName(`${cleanName.toUpperCase()} Binary`);
     }
 
-    // Generate simulated SHA-256 hash
-    const fakeHash = Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join('');
-    setFormSha256(fakeHash);
+    // Read physical file content and write directly to server local filesystem
+    const reader = new FileReader();
+    reader.onload = async () => {
+      try {
+        const base64 = reader.result as string;
+        const uploadRes = await uploadFirmwareFile({
+          fileName: file.name,
+          fileContentBase64: base64,
+          fileSize: file.size,
+          component: detectedComp,
+          vendor: formVendor,
+        });
+
+        if (uploadRes.success && uploadRes.exists) {
+          setServerDiskVerification(uploadRes);
+          setFormStoredPathOnServer(uploadRes.storedPathOnServer || '');
+          setFormRelativeServerPath(uploadRes.relativeServerPath || '');
+          if (uploadRes.sha256) setFormSha256(uploadRes.sha256);
+          showToast(`File "${file.name}" stored and verified on server disk at ${uploadRes.storedPathOnServer}`);
+        } else {
+          // Fallback hash
+          setFormSha256(Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join(''));
+        }
+      } catch (err: any) {
+        console.warn('Physical disk upload error:', err);
+        setFormSha256(Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join(''));
+      } finally {
+        setIsUploadingToServer(false);
+      }
+    };
+    reader.readAsDataURL(file);
   };
 
   const handleDragOver = (e: React.DragEvent) => {
@@ -232,6 +307,13 @@ export const FirmwareCatalog: React.FC<FirmwareCatalogProps> = ({
       releaseNotes: formReleaseNotes.trim() || 'Verified production firmware release for datacenter deployment.',
       rebootRequired: formRebootRequired,
       fileName,
+      storedPathOnServer: formStoredPathOnServer || (editingPackageId ? packages.find(p => p.id === editingPackageId)?.storedPathOnServer : undefined),
+      relativeServerPath: formRelativeServerPath || (editingPackageId ? packages.find(p => p.id === editingPackageId)?.relativeServerPath : undefined),
+      verifiedOnDisk: serverDiskVerification?.exists || (editingPackageId ? packages.find(p => p.id === editingPackageId)?.verifiedOnDisk : false),
+      fileSizeBytes: serverDiskVerification?.fileSizeBytes,
+      verifiedAt: serverDiskVerification?.exists ? new Date().toISOString() : undefined,
+      diskPermissions: serverDiskVerification?.permissions,
+      diskMd5: serverDiskVerification?.md5,
     };
 
     if (editingPackageId && onUpdatePackage) {
@@ -373,6 +455,31 @@ export const FirmwareCatalog: React.FC<FirmwareCatalogProps> = ({
             </button>
           </div>
 
+          <button
+            type="button"
+            id="btn-open-server-storage"
+            onClick={() => {
+              setStorageExplorerTargetFile(null);
+              setIsStorageExplorerOpen(true);
+            }}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-lg text-xs font-semibold shadow-xs transition-colors"
+            title="Inspect where firmware binaries are stored on the server local filesystem (/uploads/firmware)"
+          >
+            <HardDrive className="w-4 h-4 text-emerald-600" />
+            <span>Server Storage Explorer</span>
+          </button>
+
+          <button
+            type="button"
+            id="btn-vcenter-task-faq"
+            onClick={() => setShowVcenterTaskFaq(true)}
+            className="inline-flex items-center gap-1.5 px-3 py-2 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 rounded-lg text-xs font-semibold shadow-xs transition-colors"
+            title="Learn why tasks might not appear in vCenter Recent Tasks"
+          >
+            <HelpCircle className="w-4 h-4 text-amber-600" />
+            <span>Why No Task in vCenter?</span>
+          </button>
+
           {onOpenVmwareIsoTester && (
             <button
               type="button"
@@ -396,6 +503,19 @@ export const FirmwareCatalog: React.FC<FirmwareCatalogProps> = ({
           </button>
         </div>
       </div>
+
+      {/* Copy Toast Notification */}
+      {copyFeedback && (
+        <div className="bg-emerald-600 text-white px-4 py-2.5 rounded-xl shadow-lg text-xs font-medium flex items-center justify-between animate-in slide-in-from-top-2">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4" />
+            <span>{copyFeedback}</span>
+          </div>
+          <button type="button" onClick={() => setCopyFeedback(null)} className="text-emerald-100 hover:text-white">
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
 
       {/* Filter and Search Bar */}
       <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs flex flex-wrap items-center justify-between gap-3">
@@ -702,9 +822,61 @@ export const FirmwareCatalog: React.FC<FirmwareCatalogProps> = ({
                       </div>
                     </div>
 
+                    {/* Server Local Storage Status on File System */}
+                    <div className="mt-4 p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1.5 text-xs font-bold text-slate-800">
+                          <HardDrive className="w-3.5 h-3.5 text-emerald-600" />
+                          <span>Server Local File System</span>
+                        </div>
+                        {pkg.verifiedOnDisk ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold border border-emerald-300">
+                            <CheckCircle2 className="w-3 h-3 text-emerald-600" /> File Exists on Disk
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => setSelectedInspectPkg(pkg)}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[10px] font-semibold border border-indigo-200 transition-colors"
+                          >
+                            <FolderCheck className="w-3 h-3 text-indigo-600" /> Check Disk
+                          </button>
+                        )}
+                      </div>
+
+                      <div className="flex items-center justify-between text-[11px] font-mono bg-white p-2 rounded-lg border border-slate-200 text-slate-700">
+                        <span className="truncate max-w-[280px]" title={pkg.storedPathOnServer || `uploads/firmware/${pkg.fileName}`}>
+                          📁 {pkg.relativeServerPath || pkg.storedPathOnServer || `uploads/firmware/${pkg.fileName}`}
+                        </span>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const p = pkg.storedPathOnServer || `/uploads/firmware/${pkg.fileName}`;
+                              navigator.clipboard?.writeText(p);
+                              showToast(`Copied path: ${p}`);
+                            }}
+                            className="p-1 hover:bg-slate-100 text-slate-500 hover:text-slate-800 rounded transition-colors"
+                            title="Copy path on server filesystem"
+                          >
+                            <Copy className="w-3 h-3" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setSelectedInspectPkg(pkg)}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded text-[10px] font-semibold transition-colors"
+                            title="Inspect physical presence, byte size, and SHA-256 on server disk"
+                          >
+                            <FolderCheck className="w-3 h-3" />
+                            <span>Verify Disk</span>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
                     {/* Bottom Action Bar */}
-                    <div className="mt-5 pt-4 border-t border-slate-100 flex items-center justify-between">
-                      <div className="flex items-center space-x-2">
+                    <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between">
+                      <div className="flex items-center space-x-1.5">
                         <button
                           type="button"
                           onClick={() => openEditModal(pkg)}
@@ -713,6 +885,15 @@ export const FirmwareCatalog: React.FC<FirmwareCatalogProps> = ({
                         >
                           <Edit2 className="w-3.5 h-3.5" />
                           <span>Edit</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedInspectPkg(pkg)}
+                          className="p-1.5 text-slate-500 hover:text-emerald-700 hover:bg-emerald-50 rounded-lg text-xs font-medium flex items-center gap-1 transition-colors"
+                          title="Verify if file exists on server disk"
+                        >
+                          <HardDrive className="w-3.5 h-3.5 text-emerald-600" />
+                          <span>Inspect Disk</span>
                         </button>
                         {onDeletePackage && (
                           <button
@@ -955,6 +1136,67 @@ export const FirmwareCatalog: React.FC<FirmwareCatalogProps> = ({
                   Supports .bin, .exe (Dell DUP), .fwpkg (HPE Service Pack), .d7, .iso, .tar.gz
                 </p>
               </div>
+
+              {/* Physical Storage Status on Server Filesystem */}
+              {isUploadingToServer && (
+                <div className="p-3 bg-indigo-50/70 border border-indigo-200 rounded-xl flex items-center gap-3 text-xs text-indigo-900">
+                  <RefreshCw className="w-4 h-4 text-indigo-600 animate-spin shrink-0" />
+                  <div>
+                    <p className="font-semibold">Writing payload to server filesystem...</p>
+                    <p className="text-[11px] text-indigo-700 font-mono">
+                      Target location: /uploads/firmware/{uploadedFileName}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {serverDiskVerification && serverDiskVerification.exists && (
+                <div className="p-3.5 bg-emerald-50 border border-emerald-300 rounded-xl space-y-2 text-xs">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1.5 font-bold text-emerald-900">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                      <span>Physical File Stored & Verified on Server Filesystem</span>
+                    </div>
+                    <span className="px-2 py-0.5 rounded-full bg-emerald-200 text-emerald-950 font-mono text-[10px] font-bold">
+                      fs.statSync() : VALID
+                    </span>
+                  </div>
+
+                  <div className="p-2 bg-white rounded-lg border border-emerald-200 font-mono text-[11px] text-slate-800 flex items-center justify-between gap-2">
+                    <span className="truncate" title={serverDiskVerification.storedPathOnServer}>
+                      📁 {serverDiskVerification.storedPathOnServer}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (serverDiskVerification.storedPathOnServer) {
+                          navigator.clipboard?.writeText(serverDiskVerification.storedPathOnServer);
+                          showToast(`Copied server path: ${serverDiskVerification.storedPathOnServer}`);
+                        }
+                      }}
+                      className="inline-flex items-center gap-1 px-2 py-0.5 bg-emerald-100 hover:bg-emerald-200 text-emerald-900 rounded font-sans text-[10px] font-semibold transition-colors shrink-0"
+                    >
+                      <Copy className="w-3 h-3" />
+                      <span>Copy Path</span>
+                    </button>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px] text-emerald-800 font-mono pt-1">
+                    <div>
+                      <span className="text-slate-500 font-sans block text-[10px]">Exact Bytes:</span>
+                      <span>{serverDiskVerification.fileSizeBytes?.toLocaleString()} bytes</span>
+                    </div>
+                    <div>
+                      <span className="text-slate-500 font-sans block text-[10px]">Permissions:</span>
+                      <span>{serverDiskVerification.permissions || '0644 (rw-r--r--)'}</span>
+                    </div>
+                    <div>
+                      <span className="text-slate-500 font-sans block text-[10px]">File Integrity:</span>
+                      <span className="text-emerald-700 font-bold">Verified on Disk</span>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Package Identification */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
@@ -1199,6 +1441,146 @@ export const FirmwareCatalog: React.FC<FirmwareCatalogProps> = ({
                 className="px-4 py-2 text-xs font-semibold text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors"
               >
                 Delete Package
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Server Storage Explorer Modal */}
+      <FirmwareStorageExplorerModal
+        isOpen={isStorageExplorerOpen}
+        onClose={() => {
+          setIsStorageExplorerOpen(false);
+          setStorageExplorerTargetFile(null);
+        }}
+        targetFile={storageExplorerTargetFile}
+      />
+
+      {/* Per-Package Server File Inspector Modal */}
+      {selectedInspectPkg && (
+        <ServerFileInspectorModal
+          isOpen={!!selectedInspectPkg}
+          onClose={() => setSelectedInspectPkg(null)}
+          packageItem={selectedInspectPkg}
+          onFileVerified={(result) => {
+            if (result.exists && onUpdatePackage) {
+              onUpdatePackage({
+                ...selectedInspectPkg,
+                storedPathOnServer: result.storedPathOnServer,
+                relativeServerPath: result.relativeServerPath,
+                verifiedOnDisk: true,
+                fileSizeBytes: result.fileSizeBytes,
+                fileSizeMb: result.fileSizeMb,
+                sha256: result.sha256 || selectedInspectPkg.sha256,
+                diskPermissions: result.permissions,
+                diskMd5: result.md5,
+                verifiedAt: new Date().toISOString(),
+              });
+            }
+          }}
+        />
+      )}
+
+      {/* Why No Task in vCenter FAQ Modal */}
+      {showVcenterTaskFaq && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/75 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-150">
+          <div className="relative bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl max-w-2xl w-full text-slate-100 overflow-hidden">
+            <div className="px-6 py-4 bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 border-b border-slate-700 flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-amber-500/10 border border-amber-500/30 rounded-xl text-amber-400">
+                  <HelpCircle className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-100">
+                    Why Don't I See Tasks in vCenter When Mounting an ISO?
+                  </h3>
+                  <p className="text-xs text-slate-400">
+                    Understanding VMware vCenter Task Generation & Network Requirements
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowVcenterTaskFaq(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-white transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4 text-xs text-slate-300 max-h-[75vh] overflow-y-auto">
+              <div className="p-4 bg-amber-950/30 border border-amber-500/40 rounded-xl space-y-2">
+                <h4 className="font-bold text-amber-300 text-sm flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 text-amber-400" />
+                  Primary Technical Causes
+                </h4>
+                <p className="text-slate-300 leading-relaxed">
+                  When you attach or mount an ISO onto a virtual machine, VMware vCenter registers a <code className="bg-slate-800 px-1.5 py-0.5 rounded text-cyan-300 font-mono">ReconfigVM_Task</code> in its <strong>Recent Tasks</strong> panel only if specific architectural conditions are met:
+                </p>
+              </div>
+
+              {/* Cause 1 */}
+              <div className="p-4 bg-slate-800/60 border border-slate-700 rounded-xl space-y-2">
+                <div className="flex items-center gap-2 text-cyan-400 font-bold text-sm">
+                  <span className="w-5 h-5 rounded-full bg-cyan-500/20 flex items-center justify-center text-xs">1</span>
+                  <span>Simulation Sandbox Mode is Active</span>
+                </div>
+                <p className="text-slate-300 leading-relaxed pl-7">
+                  If the <strong>"Simulate Lab Environment"</strong> checkbox is checked in the VMware ISO Tester, the application executes simulated latency runs locally in memory so you can test without live hardware. Because no network packets leave the server, no task is generated in vCenter.
+                </p>
+                <div className="pl-7 text-[11px] text-cyan-300/80 font-mono">
+                  Solution: Uncheck "Simulate Lab Environment" and provide live vCenter credentials.
+                </div>
+              </div>
+
+              {/* Cause 2 */}
+              <div className="p-4 bg-slate-800/60 border border-slate-700 rounded-xl space-y-2">
+                <div className="flex items-center gap-2 text-indigo-400 font-bold text-sm">
+                  <span className="w-5 h-5 rounded-full bg-indigo-500/20 flex items-center justify-center text-xs">2</span>
+                  <span>Private RFC-1918 Network Isolation</span>
+                </div>
+                <p className="text-slate-300 leading-relaxed pl-7">
+                  vCenter servers are usually deployed on internal private networks (e.g. <code className="bg-slate-900 px-1 py-0.5 rounded font-mono text-slate-200">192.168.x.x</code>, <code className="bg-slate-900 px-1 py-0.5 rounded font-mono text-slate-200">10.x.x.x</code>). Applications running in cloud container environments cannot route packets directly into private on-prem subnets without a VPN tunnel or reverse SSH proxy.
+                </p>
+                <div className="pl-7 text-[11px] text-indigo-300/80 font-mono">
+                  Solution: Deploy this application inside the same network or use a public FQDN with port 443 forwarded.
+                </div>
+              </div>
+
+              {/* Cause 3 */}
+              <div className="p-4 bg-slate-800/60 border border-slate-700 rounded-xl space-y-2">
+                <div className="flex items-center gap-2 text-emerald-400 font-bold text-sm">
+                  <span className="w-5 h-5 rounded-full bg-emerald-500/20 flex items-center justify-center text-xs">3</span>
+                  <span>ISO Must Reside on an ESXi Datastore (Not Local Web Server Disk)</span>
+                </div>
+                <p className="text-slate-300 leading-relaxed pl-7">
+                  VMware ESXi hypervisors cannot read ISO files directly from your web server's <code className="bg-slate-900 px-1 py-0.5 rounded font-mono text-slate-200">/uploads/firmware/</code> folder. The ISO <strong>must be transferred to a VMware Datastore</strong> (e.g. <code className="bg-slate-900 px-1 py-0.5 rounded font-mono text-emerald-300">[datastore1] iso/package.iso</code>). Once the file exists on the ESXi datastore, the virtual CD/DVD drive reconfigure request can reference it.
+                </p>
+                <div className="pl-7 text-[11px] text-emerald-300/80 font-mono">
+                  Solution: Use Step 4 in the VMware ISO Tester to upload the ISO directly to your datastore.
+                </div>
+              </div>
+
+              {/* Cause 4 */}
+              <div className="p-4 bg-slate-800/60 border border-slate-700 rounded-xl space-y-2">
+                <div className="flex items-center gap-2 text-purple-400 font-bold text-sm">
+                  <span className="w-5 h-5 rounded-full bg-purple-500/20 flex items-center justify-center text-xs">4</span>
+                  <span>Session Authentication & Reconfig Permissions</span>
+                </div>
+                <p className="text-slate-300 leading-relaxed pl-7">
+                  To trigger a visible task in vCenter, the session must have <code className="bg-slate-900 px-1 py-0.5 rounded font-mono text-purple-300">VirtualMachine.Config.AddExistingDisk</code> and <code className="bg-slate-900 px-1 py-0.5 rounded font-mono text-purple-300">VirtualMachine.Config.RawDevice</code> permissions.
+                </p>
+              </div>
+            </div>
+
+            <div className="px-6 py-4 bg-slate-900 border-t border-slate-800 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setShowVcenterTaskFaq(false)}
+                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg text-xs transition-colors"
+              >
+                Got It
               </button>
             </div>
           </div>

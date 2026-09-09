@@ -10,7 +10,9 @@ import {
   VmwareVmInfo,
   VmwareDatastoreInfo,
   VmwareFileUploadResult,
-  VmwarePowerStateResult
+  VmwarePowerStateResult,
+  DiskVerificationResult,
+  ServerStorageFile
 } from '../types';
 import { 
   loadServers, 
@@ -470,5 +472,118 @@ export async function manageVmPowerState(params: {
     };
   }
 }
+
+// -------------------------------------------------------------
+// Firmware Catalog Local Disk Storage & Verification APIs
+// -------------------------------------------------------------
+
+export async function uploadFirmwareFile(params: {
+  fileName: string;
+  fileContentBase64?: string;
+  fileSize?: number;
+  component?: string;
+  vendor?: string;
+}): Promise<DiskVerificationResult> {
+  try {
+    const res = await fetch('/api/firmware/upload', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    });
+    return await res.json();
+  } catch (e: any) {
+    return {
+      success: false,
+      exists: false,
+      fileName: params.fileName,
+      error: e.message || 'Failed to upload firmware file to server storage.',
+    };
+  }
+}
+
+export async function verifyFirmwareDiskFile(fileName: string): Promise<DiskVerificationResult> {
+  try {
+    const res = await fetch('/api/firmware/verify-disk', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fileName }),
+    });
+    return await res.json();
+  } catch (e: any) {
+    return {
+      success: false,
+      exists: false,
+      fileName,
+      error: e.message || 'Verification request failed.',
+    };
+  }
+}
+
+export async function storeSampleFirmwareToDisk(params: {
+  fileName: string;
+  fileSizeMb?: number;
+  sha256?: string;
+  component?: string;
+  vendor?: string;
+}): Promise<DiskVerificationResult> {
+  try {
+    const res = await fetch('/api/firmware/store-sample-disk', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    });
+    return await res.json();
+  } catch (e: any) {
+    return {
+      success: false,
+      exists: false,
+      fileName: params.fileName,
+      error: e.message || 'Failed to generate and store sample firmware file on disk.',
+    };
+  }
+}
+
+export async function fetchServerStorageFiles(): Promise<{
+  success: boolean;
+  serverWorkingDir: string;
+  firmwareDir: string;
+  datastoresDir: string;
+  files: ServerStorageFile[];
+  totalFiles: number;
+  totalSizeBytes: number;
+  error?: string;
+}> {
+  try {
+    const res = await fetch('/api/firmware/storage-files');
+    return await res.json();
+  } catch (e: any) {
+    return {
+      success: false,
+      serverWorkingDir: '',
+      firmwareDir: '',
+      datastoresDir: '',
+      files: [],
+      totalFiles: 0,
+      totalSizeBytes: 0,
+      error: e.message,
+    };
+  }
+}
+
+export async function deleteServerStorageFile(fileName: string, folder: 'firmware' | 'datastores' = 'firmware'): Promise<{
+  success: boolean;
+  message?: string;
+  error?: string;
+}> {
+  try {
+    const res = await fetch(`/api/firmware/files/${encodeURIComponent(fileName)}?folder=${folder}`, {
+      method: 'DELETE',
+    });
+    return await res.json();
+  } catch (e: any) {
+    return { success: false, error: e.message };
+  }
+}
+
 
 
