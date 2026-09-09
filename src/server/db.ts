@@ -1,7 +1,7 @@
 import { Pool, PoolConfig } from 'pg';
 import dotenv from 'dotenv';
 import { Server, FirmwarePackage, AuditRecord, BaselineConfig, UpgradeCampaign } from '../types';
-import { INITIAL_SERVERS, INITIAL_FIRMWARE_PACKAGES, INITIAL_AUDIT_LOGS, DEFAULT_BASELINE } from '../data/mockFleet';
+import { DEFAULT_BASELINE } from '../data/mockFleet';
 
 dotenv.config();
 
@@ -196,19 +196,17 @@ export async function initializeSchema(): Promise<boolean> {
       );
     `);
 
-    // Check if initial seed is needed
-    const serverCountRes = await currentPool.query('SELECT count(*) as count FROM servers');
-    const serverCount = parseInt(serverCountRes.rows[0]?.count || '0', 10);
-    const flushCheckRes = await currentPool.query("SELECT value FROM app_settings WHERE key = 'fleet_flushed'");
-    const isFlushed = flushCheckRes.rows[0]?.value === true;
-
-    if (serverCount === 0 && !isFlushed) {
-      console.log('[PostgreSQL] Database tables are empty. Auto-seeding initial fleet data...');
-      await seedInitialData();
+    // Purge any historical mock/sample data if present
+    try {
+      await currentPool.query(`DELETE FROM servers WHERE id IN ('srv-01','srv-02','srv-03','srv-04','srv-05','srv-06','srv-07','srv-08','srv-09','srv-10','srv-11','srv-12')`);
+      await currentPool.query(`DELETE FROM firmware_packages WHERE id IN ('fw-iso-hpe-spp-2026.08', 'fw-iso-dell-suu-26.08', 'fw-bios-dell-2.20.0', 'fw-bmc-dell-7.00.00.00', 'fw-nic-mellanox-22.39', 'fw-raid-broadcom-52.16', 'fw-nvme-kioxia-1.3.0', 'fw-bios-hpe-2.92', 'fw-bmc-hpe-ilo5-2.98', 'fw-bios-lenovo-3.40', 'fw-bmc-lenovo-xcc-4.80')`);
+      await currentPool.query(`DELETE FROM audit_records WHERE id IN ('aud-101', 'aud-102', 'aud-103', 'aud-104')`);
+    } catch {
+      // Ignored if tables were just initialized
     }
 
     isConnected = true;
-    console.log('[PostgreSQL] Schema successfully initialized.');
+    console.log('[PostgreSQL] Schema successfully initialized (Real Data Only mode).');
     return true;
   } catch (err: any) {
     console.error('[PostgreSQL] Schema initialization failed:', err.message);
@@ -220,148 +218,24 @@ export async function initializeSchema(): Promise<boolean> {
 
 export async function seedInitialData(): Promise<void> {
   const currentPool = initPool();
-  
-  // Seed servers
-  for (const s of INITIAL_SERVERS) {
+  try {
+    // Only ensure standard baseline template exists; no mock servers, packages, or logs
     await currentPool.query(`
-      INSERT INTO servers (
-        id, hostname, vendor, hypervisor, hypervisor_version, hypervisor_maintenance_mode, active_vms_count,
-        cluster, datacenter, rack, unit, ip, bmc_ip, bmc_type, 
-        model, architecture, status, power_state, power_supply_redundancy, 
-        components, credentials, access_status, tags, notes, last_upgrade_date
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
-      ON CONFLICT (id) DO UPDATE SET
-        hostname = EXCLUDED.hostname,
-        vendor = EXCLUDED.vendor,
-        hypervisor = EXCLUDED.hypervisor,
-        hypervisor_version = EXCLUDED.hypervisor_version,
-        hypervisor_maintenance_mode = EXCLUDED.hypervisor_maintenance_mode,
-        active_vms_count = EXCLUDED.active_vms_count,
-        cluster = EXCLUDED.cluster,
-        datacenter = EXCLUDED.datacenter,
-        rack = EXCLUDED.rack,
-        unit = EXCLUDED.unit,
-        ip = EXCLUDED.ip,
-        bmc_ip = EXCLUDED.bmc_ip,
-        bmc_type = EXCLUDED.bmc_type,
-        model = EXCLUDED.model,
-        architecture = EXCLUDED.architecture,
-        status = EXCLUDED.status,
-        power_state = EXCLUDED.power_state,
-        power_supply_redundancy = EXCLUDED.power_supply_redundancy,
-        components = EXCLUDED.components,
-        credentials = EXCLUDED.credentials,
-        access_status = EXCLUDED.access_status,
-        tags = EXCLUDED.tags,
-        notes = EXCLUDED.notes,
-        last_upgrade_date = EXCLUDED.last_upgrade_date,
-        updated_at = NOW()
-    `, [
-      s.id,
-      s.hostname,
-      s.vendor || 'DELL',
-      s.hypervisor || 'VMware ESXi',
-      s.hypervisorVersion || 'ESXi 8.0 Update 2',
-      s.hypervisorMaintenanceMode || false,
-      s.activeVmsCount || 0,
-      s.cluster,
-      s.datacenter,
-      s.rack,
-      s.unit,
-      s.ip,
-      s.bmcIp,
-      s.bmcAffectedType,
-      s.model,
-      s.architecture,
-      s.status,
-      s.powerState,
-      s.powerSupplyRedundancy,
-      JSON.stringify(s.components),
-      JSON.stringify(s.credentials || {}),
-      JSON.stringify(s.accessStatus || {}),
-      JSON.stringify(s.tags || []),
-      s.notes || null,
-      s.lastUpgradeDate || null,
-    ]);
-  }
-
-  // Seed firmware packages
-  for (const p of INITIAL_FIRMWARE_PACKAGES) {
-    await currentPool.query(`
-      INSERT INTO firmware_packages (
-        id, name, component, version, release_date, severity, supported_models,
-        min_prerequisite_version, file_size_mb, sha256, cves, release_notes,
-        reboot_required, vendor, file_name
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+      INSERT INTO baselines (id, name, description, rules, enforce_security_patches)
+      VALUES ($1, $2, $3, $4, $5)
       ON CONFLICT (id) DO NOTHING
     `, [
-      p.id,
-      p.name,
-      p.component,
-      p.version,
-      p.releaseDate,
-      p.severity,
-      JSON.stringify(p.supportedModels),
-      p.minPrerequisiteVersion || null,
-      p.fileSizeMb,
-      p.sha256,
-      JSON.stringify(p.cves || []),
-      p.releaseNotes,
-      p.rebootRequired,
-      p.vendor,
-      p.fileName,
+      DEFAULT_BASELINE.id,
+      DEFAULT_BASELINE.name,
+      DEFAULT_BASELINE.description,
+      JSON.stringify(DEFAULT_BASELINE.rules),
+      DEFAULT_BASELINE.enforceSecurityPatches,
     ]);
+
+    console.log('[PostgreSQL] Seed completed: Real Data Only mode active (0 mock objects).');
+  } catch (err: any) {
+    console.error('[PostgreSQL] seedInitialData error:', err.message);
   }
-
-  // Seed audit logs
-  for (const a of INITIAL_AUDIT_LOGS) {
-    await currentPool.query(`
-      INSERT INTO audit_records (
-        id, timestamp, server_hostname, server_id, component, from_version,
-        to_version, status, operator, duration_seconds, firmware_package_name
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-      ON CONFLICT (id) DO NOTHING
-    `, [
-      a.id,
-      a.timestamp,
-      a.serverHostname,
-      a.serverId,
-      a.component,
-      a.fromVersion,
-      a.toVersion,
-      a.status,
-      a.operator,
-      a.durationSeconds,
-      a.firmwarePackageName,
-    ]);
-  }
-
-  // Seed baseline
-  await currentPool.query(`
-    INSERT INTO baselines (id, name, description, rules, enforce_security_patches)
-    VALUES ($1, $2, $3, $4, $5)
-    ON CONFLICT (id) DO UPDATE SET
-      name = EXCLUDED.name,
-      description = EXCLUDED.description,
-      rules = EXCLUDED.rules,
-      enforce_security_patches = EXCLUDED.enforce_security_patches,
-      updated_at = NOW()
-  `, [
-    DEFAULT_BASELINE.id,
-    DEFAULT_BASELINE.name,
-    DEFAULT_BASELINE.description,
-    JSON.stringify(DEFAULT_BASELINE.rules),
-    DEFAULT_BASELINE.enforceSecurityPatches,
-  ]);
-
-  // Reset flushed flag
-  await currentPool.query(`
-    INSERT INTO app_settings (key, value)
-    VALUES ('fleet_flushed', 'false'::jsonb)
-    ON CONFLICT (key) DO UPDATE SET value = 'false'::jsonb, updated_at = NOW()
-  `);
-
-  console.log('[PostgreSQL] Seed completed successfully.');
 }
 
 export async function flushAllData(): Promise<void> {

@@ -26,7 +26,9 @@ import {
   FileUp,
   Cpu,
   FolderDown,
-  Layers
+  Layers,
+  Plus,
+  Trash2
 } from 'lucide-react';
 import { 
   FirmwarePackage, 
@@ -44,6 +46,8 @@ import {
   mountIsoOnVmwareVm, 
   unmountIsoFromVmwareVm,
   fetchVmwareDatastores,
+  addCustomDatastore,
+  deleteCustomDatastore,
   uploadFileToDatastore,
   verifyDatastoreFile,
   manageVmPowerState
@@ -100,6 +104,10 @@ export const VmwareIsoTesterModal: React.FC<VmwareIsoTesterModalProps> = ({
   const [datastores, setDatastores] = useState<VmwareDatastoreInfo[]>([]);
   const [isFetchingDatastores, setIsFetchingDatastores] = useState(false);
   const [selectedDatastore, setSelectedDatastore] = useState<string>('datastore1');
+  const [showAddDatastore, setShowAddDatastore] = useState<boolean>(false);
+  const [newDsName, setNewDsName] = useState<string>('');
+  const [newDsType, setNewDsType] = useState<string>('VMFS-6');
+  const [newDsCapacityGb, setNewDsCapacityGb] = useState<string>('1000');
 
   // Additional Step 2: File Upload & Server-side Verification
   const [uploadedFile, setUploadedFile] = useState<File | null>(null);
@@ -324,6 +332,7 @@ export const VmwareIsoTesterModal: React.FC<VmwareIsoTesterModalProps> = ({
       if (!selectedDatastore || !res.datastores.find((d) => d.name === selectedDatastore)) {
         setSelectedDatastore(res.datastores[0].name);
         setVcenterDatastore(res.datastores[0].name);
+        setIsoDatastorePath(`[${res.datastores[0].name}] iso/${uploadFileName || 'firmware-package.iso'}`);
       }
       addLog(
         'DATASTORE',
@@ -337,12 +346,22 @@ export const VmwareIsoTesterModal: React.FC<VmwareIsoTesterModalProps> = ({
                 1024 /
                 1024 /
                 1024
-              ).toFixed(1)} GB [Accessible to VM ${vmName}: YES]`
+              ).toFixed(1)} GB [Source: ${d.source || 'vSphere inventory'}]`
           )
           .join('\n')
       );
       if (onShowToast) {
         onShowToast(`Discovered ${res.datastores.length} datastores accessible to ${vmName}`, 'success');
+      }
+    } else if (res.success && (!res.datastores || res.datastores.length === 0)) {
+      setDatastores([]);
+      addLog(
+        'DATASTORE',
+        res.message || `vCenter REST API returned 0 datastores for [${vmName}]. You can specify your datastore manually using "+ Add Datastore".`,
+        'warn'
+      );
+      if (onShowToast) {
+        onShowToast('No datastores found on vCenter. Please specify manually.', 'info');
       }
     } else {
       addLog('DATASTORE', `Failed to retrieve accessible datastores for [${vmName}]: ${res.error}`, 'error');
@@ -350,6 +369,62 @@ export const VmwareIsoTesterModal: React.FC<VmwareIsoTesterModalProps> = ({
         onShowToast(`Datastore retrieval failed: ${res.error}`, 'warn');
       }
     }
+  };
+
+  // Add Custom Datastore
+  const handleAddCustomDatastore = async () => {
+    if (!newDsName.trim()) return;
+    const clean = newDsName.trim().replace(/^\[|\]$/g, '');
+    const capGb = parseFloat(newDsCapacityGb) || 1000;
+    const entry: VmwareDatastoreInfo = {
+      name: clean,
+      type: newDsType,
+      capacityBytes: capGb * 1024 * 1024 * 1024,
+      freeBytes: capGb * 0.7 * 1024 * 1024 * 1024,
+      accessible: true,
+      status: 'normal',
+      vmAccessible: true,
+    };
+
+    await addCustomDatastore({
+      name: clean,
+      type: newDsType,
+      capacityGb: capGb,
+    });
+
+    setDatastores(prev => [...prev.filter(d => d.name.toLowerCase() !== clean.toLowerCase()), entry]);
+    setSelectedDatastore(clean);
+    setVcenterDatastore(clean);
+    const fileName = uploadFileName || 'firmware-package.iso';
+    setIsoDatastorePath(`[${clean}] iso/${fileName}`);
+    setNewDsName('');
+    setShowAddDatastore(false);
+    addLog('DATASTORE', `Added datastore [${clean}] (${newDsType}) and selected as target for VM operations.`, 'success');
+    if (onShowToast) {
+      onShowToast(`Datastore [${clean}] added`, 'success');
+    }
+  };
+
+  // Remove Datastore
+  const handleRemoveDatastore = async (dsName: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    await deleteCustomDatastore(dsName);
+    setDatastores(prev => {
+      const next = prev.filter(d => d.name !== dsName);
+      if (selectedDatastore === dsName) {
+        if (next.length > 0) {
+          setSelectedDatastore(next[0].name);
+          setVcenterDatastore(next[0].name);
+          setIsoDatastorePath(`[${next[0].name}] iso/${uploadFileName || 'firmware-package.iso'}`);
+        } else {
+          setSelectedDatastore('');
+          setVcenterDatastore('');
+          setIsoDatastorePath('');
+        }
+      }
+      return next;
+    });
+    addLog('DATASTORE', `Removed datastore [${dsName}] from candidate list.`, 'info');
   };
 
   // Select a Datastore from the retrieved list
@@ -959,30 +1034,103 @@ export const VmwareIsoTesterModal: React.FC<VmwareIsoTesterModalProps> = ({
                 <span>3. Retrieve Datastores Accessible from Target VM [{currentVmDisplay}]</span>
               </div>
 
-              <button
-                onClick={handleRetrieveDatastores}
-                disabled={isFetchingDatastores}
-                className="flex items-center gap-2 px-3 py-1.5 bg-purple-600/30 hover:bg-purple-600/50 text-purple-200 border border-purple-500/40 rounded-lg text-xs font-semibold transition-colors disabled:opacity-50 self-start sm:self-auto cursor-pointer"
-              >
-                {isFetchingDatastores ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
-                Get Datastores Accessible to [{currentVmDisplay}]
-              </button>
+              <div className="flex items-center gap-2 flex-wrap self-start sm:self-auto">
+                <button
+                  onClick={() => setShowAddDatastore(!showAddDatastore)}
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-lg text-xs font-medium transition-colors cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5 text-purple-400" />
+                  <span>{showAddDatastore ? 'Cancel' : '+ Add Real Datastore'}</span>
+                </button>
+
+                <button
+                  onClick={handleRetrieveDatastores}
+                  disabled={isFetchingDatastores}
+                  className="flex items-center gap-2 px-3 py-1.5 bg-purple-600/30 hover:bg-purple-600/50 text-purple-200 border border-purple-500/40 rounded-lg text-xs font-semibold transition-colors disabled:opacity-50 cursor-pointer"
+                >
+                  {isFetchingDatastores ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                  Get Datastores Accessible to [{currentVmDisplay}]
+                </button>
+              </div>
             </div>
+
+            {/* Inline Form to Add Real / Custom Datastore */}
+            {showAddDatastore && (
+              <div className="p-4 bg-slate-900/90 border border-purple-500/40 rounded-xl space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-purple-300">Specify Real Datastore Name</span>
+                  <span className="text-[11px] text-slate-400">Add storage volume directly without auto-discovery</span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="block text-[11px] text-slate-300 mb-1 font-medium">Datastore Name *</label>
+                    <input
+                      type="text"
+                      value={newDsName}
+                      onChange={(e) => setNewDsName(e.target.value)}
+                      placeholder="e.g. datastore-ssd-01"
+                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-200 font-mono focus:border-purple-500 focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-slate-300 mb-1 font-medium">Filesystem Type</label>
+                    <select
+                      value={newDsType}
+                      onChange={(e) => setNewDsType(e.target.value)}
+                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:border-purple-500 focus:outline-none"
+                    >
+                      <option value="VMFS-6">VMFS-6</option>
+                      <option value="VMFS-5">VMFS-5</option>
+                      <option value="vSAN">vSAN</option>
+                      <option value="NFS-4.1">NFS-4.1</option>
+                      <option value="NFS">NFS</option>
+                      <option value="vVOL">vVOL</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-slate-300 mb-1 font-medium">Total Size (GB)</label>
+                    <input
+                      type="number"
+                      value={newDsCapacityGb}
+                      onChange={(e) => setNewDsCapacityGb(e.target.value)}
+                      placeholder="1000"
+                      className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-200 font-mono focus:border-purple-500 focus:outline-none"
+                    />
+                  </div>
+                </div>
+                <div className="flex justify-end gap-2 pt-1">
+                  <button
+                    onClick={() => setShowAddDatastore(false)}
+                    className="px-3 py-1 bg-slate-800 text-slate-400 hover:text-slate-200 rounded-lg text-xs cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleAddCustomDatastore}
+                    disabled={!newDsName.trim()}
+                    className="flex items-center gap-1.5 px-3 py-1 bg-purple-600 hover:bg-purple-500 text-white rounded-lg text-xs font-semibold disabled:opacity-50 cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    Save & Set Active
+                  </button>
+                </div>
+              </div>
+            )}
 
             {datastores.length === 0 ? (
               <div className="p-4 bg-slate-900/60 border border-dashed border-slate-700 rounded-lg text-center space-y-2">
                 <Database className="w-6 h-6 text-slate-500 mx-auto" />
                 <p className="text-xs text-slate-300">
-                  Click <strong>"Get Datastores Accessible to [{currentVmDisplay}]"</strong> to query storage volumes mounted and directly accessible by this Virtual Machine.
+                  Click <strong>"Get Datastores Accessible to [{currentVmDisplay}]"</strong> to query storage volumes directly from vCenter.
                 </p>
                 <p className="text-[11px] text-slate-500">
-                  Storage volumes will be filtered to only datastores mounted to the host cluster running <span className="font-mono text-cyan-300">[{currentVmDisplay}]</span>.
+                  Or click <strong className="text-purple-300">+ Add Real Datastore</strong> to enter your datastore name directly.
                 </p>
               </div>
             ) : (
               <div className="space-y-3">
                 <div className="flex items-center justify-between text-xs text-slate-400">
-                  <span>Discovered {datastores.length} datastore(s) mounted & accessible to <strong className="text-cyan-300">[{currentVmDisplay}]</strong>:</span>
+                  <span>Available datastore(s) for <strong className="text-cyan-300">[{currentVmDisplay}]</strong>:</span>
                   <span className="text-[11px] font-mono text-purple-300">Active: [{selectedDatastore}]</span>
                 </div>
 
@@ -1020,6 +1168,14 @@ export const VmwareIsoTesterModal: React.FC<VmwareIsoTesterModalProps> = ({
                                 SELECTED
                               </span>
                             )}
+                            <button
+                              type="button"
+                              onClick={(e) => handleRemoveDatastore(ds.name, e)}
+                              title={`Remove ${ds.name} if it does not exist`}
+                              className="p-1 hover:bg-rose-500/20 text-slate-400 hover:text-rose-300 rounded transition-colors"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
                           </div>
                         </div>
 
@@ -1041,7 +1197,7 @@ export const VmwareIsoTesterModal: React.FC<VmwareIsoTesterModalProps> = ({
 
                         <div className="flex items-center justify-between text-[10px] text-slate-500 pt-1 border-t border-slate-800">
                           <span>Status: <strong className="text-emerald-400 uppercase">{ds.status}</strong></span>
-                          <span>Accessible to VM: <strong className="text-emerald-400">YES</strong></span>
+                          <span>Accessible: <strong className="text-emerald-400">YES</strong></span>
                         </div>
                       </div>
                     );

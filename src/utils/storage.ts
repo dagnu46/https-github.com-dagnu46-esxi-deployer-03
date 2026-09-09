@@ -1,5 +1,5 @@
 import { Server, FirmwarePackage, AuditRecord, BaselineConfig, UpgradeCampaign } from '../types';
-import { INITIAL_SERVERS, INITIAL_FIRMWARE_PACKAGES, INITIAL_AUDIT_LOGS, DEFAULT_BASELINE } from '../data/mockFleet';
+import { DEFAULT_BASELINE } from '../data/mockFleet';
 
 const STORAGE_KEYS = {
   SERVERS: 'sfm_servers_v1',
@@ -10,13 +10,27 @@ const STORAGE_KEYS = {
   FLUSHED: 'sfm_flushed_v1',
 };
 
+// Known legacy mock IDs to scrub so user never sees residual mock data
+const LEGACY_MOCK_SERVER_IDS = new Set([
+  'srv-01', 'srv-02', 'srv-03', 'srv-04', 'srv-05', 'srv-06',
+  'srv-07', 'srv-08', 'srv-09', 'srv-10', 'srv-11', 'srv-12'
+]);
+
+const LEGACY_MOCK_PACKAGE_IDS = new Set([
+  'fw-iso-hpe-spp-2026.08', 'fw-iso-dell-suu-26.08', 'fw-bios-dell-2.20.0',
+  'fw-bmc-dell-7.00.00.00', 'fw-nic-mellanox-22.39', 'fw-raid-broadcom-52.16',
+  'fw-nvme-kioxia-1.3.0', 'fw-bios-hpe-2.92', 'fw-bmc-hpe-ilo5-2.98',
+  'fw-bios-lenovo-3.40', 'fw-bmc-lenovo-xcc-4.80'
+]);
+
+const LEGACY_MOCK_AUDIT_IDS = new Set(['aud-101', 'aud-102', 'aud-103', 'aud-104']);
+
 export function isStorageFlushed(): boolean {
   try {
     const val = localStorage.getItem(STORAGE_KEYS.FLUSHED);
-    // If explicitly marked false, it's not flushed. Otherwise default to true (flushed as requested).
-    return val !== 'false';
+    return val === 'true';
   } catch {
-    return true;
+    return false;
   }
 }
 
@@ -34,104 +48,26 @@ export function flushAllStorage(): void {
 
 export function loadServers(): Server[] {
   try {
-    if (isStorageFlushed()) {
-      const raw = localStorage.getItem(STORAGE_KEYS.SERVERS);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) return parsed;
-      }
-      return [];
-    }
-
     const raw = localStorage.getItem(STORAGE_KEYS.SERVERS);
-    if (!raw) {
-      return [];
-    }
-    const parsed: Server[] = JSON.parse(raw);
-    if (Array.isArray(parsed) && parsed.length === 0) {
-      return [];
-    }
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
 
-    // If existing cached data was from an older template lacking HP or LENOVO or Xen Server, refresh to the rich fleet
-    const hasHp = parsed.some(s => s.vendor === 'HP' || s.model?.includes('HPE') || s.model?.includes('HP'));
-    const hasLenovo = parsed.some(s => s.vendor === 'LENOVO' || s.model?.includes('Lenovo'));
-    const hasXen = parsed.some(s => s.hypervisor === 'Xen Server');
-    if (!hasHp || !hasLenovo || !hasXen) {
-      saveServers(INITIAL_SERVERS);
-      return INITIAL_SERVERS;
-    }
+    // Scrub any legacy mock servers that might be cached in local storage
+    const realOnly = parsed.filter(s => 
+      !LEGACY_MOCK_SERVER_IDS.has(s.id) &&
+      !s.hostname?.includes('mgmt.prod') &&
+      !s.hostname?.includes('citrix.prod') &&
+      !s.hostname?.includes('compute.lab')
+    );
 
-    const migrated = parsed.map((s, idx) => {
-      if (!s.vendor) {
-        if (s.model?.includes('HPE') || s.model?.includes('HP')) {
-          s.vendor = 'HP';
-        } else if (s.model?.includes('Lenovo')) {
-          s.vendor = 'LENOVO';
-        } else {
-          s.vendor = 'DELL';
-        }
-      }
-      if (!s.hypervisor) {
-        if (s.cluster?.toLowerCase().includes('nutanix') || s.notes?.toLowerCase().includes('nutanix')) {
-          s.hypervisor = 'VMware ESXi on Nutanix';
-          s.hypervisorVersion = 'ESXi 7.0u3 / Nutanix AOS 6.5.4';
-        } else if (s.cluster?.toLowerCase().includes('xen') || s.hostname?.includes('xen')) {
-          s.hypervisor = 'Xen Server';
-          s.hypervisorVersion = 'XenServer 8.2 CU1 (Citrix Hypervisor)';
-        } else {
-          s.hypervisor = 'VMware ESXi';
-          s.hypervisorVersion = 'ESXi 8.0 Update 2 (Build 22380479)';
-        }
-      }
-      if (s.hypervisorMaintenanceMode === undefined) {
-        s.hypervisorMaintenanceMode = false;
-      }
-      if (s.activeVmsCount === undefined) {
-        s.activeVmsCount = 12 + (idx * 3) % 15;
-      }
-      if (!s.credentials) {
-        s.credentials = {
-          bmcUsername: 'root',
-          bmcPassword: '••••••••',
-          bmcProtocol: s.bmcAffectedType === 'Supermicro IPMI' ? 'ipmi' : 'redfish',
-          bmcPort: s.bmcAffectedType === 'Supermicro IPMI' ? 623 : 443,
-          ignoreSslErrors: true,
-          enableSsh: true,
-          sshPort: 22,
-          sshUsername: 'sysadmin',
-          sshAuthType: 'key',
-        };
-      }
-      if (!s.accessStatus) {
-        s.accessStatus = {
-          status: 'success',
-          testedAt: '2026-09-07T18:30:00Z',
-          testedBy: 'Automated Fleet Scanner',
-          summary: `Verified ${s.credentials.bmcProtocol.toUpperCase()} access (18ms response)`,
-          latencyMs: 18,
-          steps: [
-            { id: '1', name: 'Network Route & ICMP', status: 'success', message: 'Host & BMC IP reachable (1.4ms)' },
-            { id: '2', name: 'Port & TLS Handshake', status: 'success', message: `TCP port ${s.credentials.bmcPort} open` },
-            { id: '3', name: 'BMC Authentication', status: 'success', message: `Auth token granted for user '${s.credentials.bmcUsername}'` },
-            { id: '4', name: 'Telemetry Discovery', status: 'success', message: `Power: ${s.powerState.toUpperCase()} • Chassis Health: OK` },
-          ],
-          discoveredHardware: {
-            model: s.model,
-            serialNumber: `SN-${s.hostname.slice(-6).toUpperCase()}`,
-            powerState: s.powerState === 'rebooting' ? 'on' : s.powerState,
-            bmcVersionDetected: s.components.BMC?.currentVersion,
-            biosVersionDetected: s.components.BIOS?.currentVersion,
-            chassisHealth: 'OK',
-            redfishVersion: 'v1.15',
-          },
-        };
-      }
-      return s;
-    });
-    return migrated;
+    if (realOnly.length !== parsed.length) {
+      saveServers(realOnly);
+    }
+    return realOnly;
   } catch (e) {
     console.error('Failed to parse stored servers', e);
-    return INITIAL_SERVERS;
+    return [];
   }
 }
 
@@ -145,21 +81,16 @@ export function saveServers(servers: Server[]): void {
 
 export function loadFirmwarePackages(): FirmwarePackage[] {
   try {
-    if (isStorageFlushed()) {
-      const raw = localStorage.getItem(STORAGE_KEYS.FIRMWARE_PACKAGES);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) return parsed;
-      }
-      return [];
-    }
     const raw = localStorage.getItem(STORAGE_KEYS.FIRMWARE_PACKAGES);
-    if (!raw) {
-      return [];
-    }
+    if (!raw) return [];
     const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed) && parsed.length === 0) return [];
-    return parsed;
+    if (!Array.isArray(parsed)) return [];
+
+    const realOnly = parsed.filter(p => !LEGACY_MOCK_PACKAGE_IDS.has(p.id));
+    if (realOnly.length !== parsed.length) {
+      saveFirmwarePackages(realOnly);
+    }
+    return realOnly;
   } catch (e) {
     console.error('Failed to parse firmware packages', e);
     return [];
@@ -176,21 +107,16 @@ export function saveFirmwarePackages(packages: FirmwarePackage[]): void {
 
 export function loadAuditLogs(): AuditRecord[] {
   try {
-    if (isStorageFlushed()) {
-      const raw = localStorage.getItem(STORAGE_KEYS.AUDIT_LOGS);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) return parsed;
-      }
-      return [];
-    }
     const raw = localStorage.getItem(STORAGE_KEYS.AUDIT_LOGS);
-    if (!raw) {
-      return [];
-    }
+    if (!raw) return [];
     const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed) && parsed.length === 0) return [];
-    return parsed;
+    if (!Array.isArray(parsed)) return [];
+
+    const realOnly = parsed.filter(a => !LEGACY_MOCK_AUDIT_IDS.has(a.id));
+    if (realOnly.length !== parsed.length) {
+      saveAuditLogs(realOnly);
+    }
+    return realOnly;
   } catch (e) {
     console.error('Failed to parse audit logs', e);
     return [];
@@ -255,20 +181,11 @@ export function resetToDemoFleet(): {
   auditLogs: AuditRecord[];
   baseline: BaselineConfig;
 } {
-  try {
-    localStorage.setItem(STORAGE_KEYS.FLUSHED, 'false');
-  } catch (e) {
-    console.error(e);
-  }
-  saveServers(INITIAL_SERVERS);
-  saveFirmwarePackages(INITIAL_FIRMWARE_PACKAGES);
-  saveAuditLogs(INITIAL_AUDIT_LOGS);
-  saveBaseline(DEFAULT_BASELINE);
-  saveActiveCampaign(null);
+  flushAllStorage();
   return {
-    servers: INITIAL_SERVERS,
-    packages: INITIAL_FIRMWARE_PACKAGES,
-    auditLogs: INITIAL_AUDIT_LOGS,
+    servers: [],
+    packages: [],
+    auditLogs: [],
     baseline: DEFAULT_BASELINE,
   };
 }

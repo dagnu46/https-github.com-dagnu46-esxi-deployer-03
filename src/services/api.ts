@@ -363,6 +363,35 @@ export async function fetchVmwareDatastores(params: {
   }
 }
 
+export async function addCustomDatastore(params: {
+  name: string;
+  type?: string;
+  capacityGb?: number;
+  freeGb?: number;
+}): Promise<{ success: boolean; datastore?: VmwareDatastoreInfo; error?: string }> {
+  try {
+    const res = await fetch('/api/vmware/datastores/custom', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    });
+    return await res.json();
+  } catch (e: any) {
+    return { success: false, error: e.message || 'Failed to register custom datastore' };
+  }
+}
+
+export async function deleteCustomDatastore(name: string): Promise<{ success: boolean; error?: string }> {
+  try {
+    const res = await fetch(`/api/vmware/datastores/custom/${encodeURIComponent(name)}`, {
+      method: 'DELETE',
+    });
+    return await res.json();
+  } catch (e: any) {
+    return { success: false, error: e.message || 'Failed to delete custom datastore' };
+  }
+}
+
 export async function uploadFileToDatastore(params: {
   fileName: string;
   fileContentBase64?: string;

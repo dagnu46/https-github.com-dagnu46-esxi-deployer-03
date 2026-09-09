@@ -270,6 +270,8 @@ export interface VmwareDatastoreInfo {
   url?: string;
   vmAccessible?: boolean;
   mountedDisksCount?: number;
+  source?: string;
+  isUserDefined?: boolean;
 }
 
 export interface VmwareFileUploadResult {
