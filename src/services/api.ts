@@ -251,12 +251,14 @@ export async function syncSaveCampaign(campaign: UpgradeCampaign | null): Promis
 export async function testVcenterConnection(config: VmwareVcenterConfig): Promise<{
   success: boolean;
   authenticated: boolean;
+  isSimulation?: boolean;
   vcenterHost?: string;
   datacenter?: string;
   latencyMs?: number;
   vms?: VmwareVmInfo[];
   datastores?: string[];
   error?: string;
+  details?: string;
 }> {
   try {
     const res = await fetch('/api/vmware/vcenter/test-connection', {

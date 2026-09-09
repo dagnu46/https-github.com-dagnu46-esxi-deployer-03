@@ -241,6 +241,7 @@ export interface VmwareVcenterConfig {
   datacenter?: string;
   datastore?: string;
   ignoreSsl: boolean;
+  simulationMode?: boolean;
 }
 
 export interface VmwareVmInfo {
@@ -281,6 +282,7 @@ export interface VmwareMountStep {
 
 export interface VmwareIsoMountResult {
   success: boolean;
+  isSimulation?: boolean;
   mountedAt: string;
   vmName: string;
   vmId: string;
