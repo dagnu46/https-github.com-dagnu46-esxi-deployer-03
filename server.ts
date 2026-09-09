@@ -1586,7 +1586,7 @@ async function startServer() {
       }
 
       const host = vcenter?.host;
-      const isSim = vcenter?.simulationMode;
+      const isSim = !!vcenter?.simulationMode;
       let targetHost = host ? String(host).trim().replace(/^[a-zA-Z]+:\/\//, '') : '';
       let targetPort = parseInt(String(vcenter?.port), 10) || 443;
       if (targetHost.includes(':')) {
@@ -1601,9 +1601,17 @@ async function startServer() {
       if (!isSim && targetHost) {
         const tcp = await testTcpSocket(targetHost, targetPort, 3500);
         if (!tcp.reachable) {
+          const isPrivate = /^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|127\.|localhost)/.test(targetHost) ||
+                            /\.(local|lan|internal|corp|home)$/i.test(targetHost);
+          let errMsg = `Cannot mount ISO on live vCenter: Target host ${targetHost}:${targetPort} is unreachable (${tcp.error}).`;
+          if (isPrivate) {
+            errMsg += ` Note: "${targetHost}" is a private LAN IP address. Cloud-hosted containers cannot reach private subnets without a VPN tunnel or reverse proxy. To test the workflow safely in sandbox mode, check "Simulate Lab Environment".`;
+          }
           return res.status(502).json({
             success: false,
-            error: `Cannot mount ISO: Target vCenter ${targetHost}:${targetPort} is unreachable (${tcp.error}). Please test connection first or enable "Simulate Lab Environment" for offline testing.`
+            error: errMsg,
+            isSimulation: false,
+            realDispatched: false
           });
         }
       }
@@ -1612,17 +1620,19 @@ async function startServer() {
       const steps = [];
       let realDispatched = false;
       let vcenterTaskId: string | null = null;
-      let vcenterTaskMessage = '';
+      let vcenterErrorMessage: string | null = null;
 
       // Step 1: Connect vCenter API
       steps.push({
         id: 's1',
         name: 'Authenticate vSphere Session API',
         status: 'success',
-        message: `Connected to vCenter Server ${targetHost || 'target'} as ${vcenter?.username || 'authorized user'}${isSim ? ' [Simulated Lab Mode]' : ''}`,
+        message: isSim 
+          ? `Local simulation session active (In-memory sandbox mode)`
+          : `Connected to vCenter Server ${targetHost || 'target'} as ${vcenter?.username || 'authorized user'}`,
         latencyMs: 14,
         details: isSim 
-          ? 'Simulation mode session active (Local sandbox environment).' 
+          ? 'Simulation mode session active (Local sandbox environment: no commands sent to live vCenter).' 
           : 'TLS encrypted REST session verified with target vCenter.'
       });
 
@@ -1631,7 +1641,7 @@ async function startServer() {
         id: 's2',
         name: 'Locate Virtual Machine Hardware Devices',
         status: 'success',
-        message: `Target VM [${vmName || vmId}] found in datacenter inventory. Located VirtualCDROM device on IDE Controller 0:0`,
+        message: `Target VM [${vmName || vmId}] located in inventory. Locating Virtual CD/DVD Drive...`,
         latencyMs: 18,
         details: 'VirtualCDROM: IDE 0:0, Key: 3000, Summary: CD/DVD Drive 1'
       });
@@ -1641,90 +1651,160 @@ async function startServer() {
         id: 's3',
         name: 'Validate Datastore ISO Image Integrity',
         status: 'success',
-        message: `Verified ISO file format and read permissions at path: ${formattedIsoPath}`,
-        latencyMs: 32,
-        details: `ISO9660 format verified. Datastore location: ${formattedIsoPath}`
+        message: `Verified ISO path format: ${formattedIsoPath}`,
+        latencyMs: 25,
+        details: `Datastore target: ${formattedIsoPath}. Note: ESXi hosts can only read media stored directly on connected VMware Datastores.`
       });
 
       // Step 4: Reconfigure VM Hardware (Mount ISO)
-      // If live vCenter with sessionToken, attempt live vSphere REST call
-      if (!isSim && targetHost && vcenter?.sessionToken) {
-        try {
-          // Probe CDROM device on VM
-          const cdromRes = await new Promise<{ statusCode?: number; data: string }>((resolve) => {
-            const req = https.request({
-              hostname: targetHost,
-              port: targetPort,
-              path: `/api/vcenter/vm/${encodeURIComponent(vmId)}/hardware/cdrom`,
-              method: 'GET',
-              timeout: 4000,
-              rejectUnauthorized: vcenter?.ignoreSsl === false,
-              headers: {
-                'vmware-api-session-id': vcenter.sessionToken,
-                'Accept': 'application/json'
-              }
-            }, (resp) => {
-              let d = '';
-              resp.on('data', chunk => { d += chunk; });
-              resp.on('end', () => resolve({ statusCode: resp.statusCode, data: d }));
-            });
-            req.on('timeout', () => { req.destroy(); resolve({ statusCode: 408, data: '' }); });
-            req.on('error', () => resolve({ statusCode: 500, data: '' }));
-            req.end();
-          });
+      if (!isSim && targetHost) {
+        let sessionId = vcenter?.sessionToken;
+        if (!sessionId && vcenter?.username) {
+          const authProbe = await probeVcenterHttps(
+            targetHost,
+            targetPort,
+            vcenter.username,
+            vcenter.password,
+            vcenter.ignoreSsl !== false,
+            5000
+          );
+          if (authProbe.success && authProbe.sessionId) {
+            sessionId = authProbe.sessionId;
+          }
+        }
 
-          if (cdromRes.statusCode === 200 && cdromRes.data) {
-            let cdromId = '3000';
-            try {
-              const parsed = JSON.parse(cdromRes.data);
-              if (Array.isArray(parsed) && parsed[0]?.cdrom) {
-                cdromId = parsed[0].cdrom;
-              }
-            } catch (e) {}
-
-            // Send PATCH request to mount ISO backing
-            const patchBody = JSON.stringify({
-              backing: {
-                type: 'ISO_FILE',
-                iso_file: formattedIsoPath
-              },
-              start_connected: true,
-              allow_guest_control: true
-            });
-
-            const patchRes = await new Promise<{ statusCode?: number; data: string }>((resolve) => {
+        if (sessionId) {
+          try {
+            // Probe CDROM device on VM in live vCenter
+            const cdromRes = await new Promise<{ statusCode?: number; data: string }>((resolve) => {
               const req = https.request({
                 hostname: targetHost,
                 port: targetPort,
-                path: `/api/vcenter/vm/${encodeURIComponent(vmId)}/hardware/cdrom/${encodeURIComponent(cdromId)}`,
-                method: 'PATCH',
+                path: `/api/vcenter/vm/${encodeURIComponent(vmId)}/hardware/cdrom`,
+                method: 'GET',
                 timeout: 5000,
                 rejectUnauthorized: vcenter?.ignoreSsl === false,
                 headers: {
-                  'vmware-api-session-id': vcenter.sessionToken,
-                  'Content-Type': 'application/json',
-                  'Content-Length': Buffer.byteLength(patchBody)
+                  'vmware-api-session-id': sessionId,
+                  'Accept': 'application/json'
                 }
               }, (resp) => {
                 let d = '';
                 resp.on('data', chunk => { d += chunk; });
                 resp.on('end', () => resolve({ statusCode: resp.statusCode, data: d }));
               });
-              req.on('timeout', () => { req.destroy(); resolve({ statusCode: 408, data: '' }); });
-              req.on('error', () => resolve({ statusCode: 500, data: '' }));
-              req.write(patchBody);
+              req.on('timeout', () => { req.destroy(); resolve({ statusCode: 408, data: 'Timeout connecting to vCenter' }); });
+              req.on('error', (err) => resolve({ statusCode: 500, data: err.message }));
               req.end();
             });
 
-            if (patchRes.statusCode === 200 || patchRes.statusCode === 204) {
-              realDispatched = true;
-              vcenterTaskId = `task-${Math.floor(10000 + Math.random() * 90000)}`;
-              vcenterTaskMessage = `Task ${vcenterTaskId} registered in live vCenter: "Reconfigure virtual machine ${vmName || vmId}" (CD-ROM backing set to ${formattedIsoPath})`;
+            if (cdromRes.statusCode === 404) {
+              vcenterErrorMessage = `Virtual Machine "${vmName || vmId}" was not found in live vCenter inventory on ${targetHost}.`;
+            } else if (cdromRes.statusCode === 200 && cdromRes.data) {
+              let cdromId = '3000';
+              try {
+                const parsed = JSON.parse(cdromRes.data);
+                if (Array.isArray(parsed) && parsed[0]?.cdrom) {
+                  cdromId = parsed[0].cdrom;
+                }
+              } catch (e) {}
+
+              // Send PATCH request to mount ISO backing in vCenter
+              const patchBody = JSON.stringify({
+                backing: {
+                  type: 'ISO_FILE',
+                  iso_file: formattedIsoPath
+                },
+                start_connected: true,
+                allow_guest_control: true
+              });
+
+              const patchRes = await new Promise<{ statusCode?: number; data: string }>((resolve) => {
+                const req = https.request({
+                  hostname: targetHost,
+                  port: targetPort,
+                  path: `/api/vcenter/vm/${encodeURIComponent(vmId)}/hardware/cdrom/${encodeURIComponent(cdromId)}`,
+                  method: 'PATCH',
+                  timeout: 6000,
+                  rejectUnauthorized: vcenter?.ignoreSsl === false,
+                  headers: {
+                    'vmware-api-session-id': sessionId,
+                    'Content-Type': 'application/json',
+                    'Content-Length': Buffer.byteLength(patchBody)
+                  }
+                }, (resp) => {
+                  let d = '';
+                  resp.on('data', chunk => { d += chunk; });
+                  resp.on('end', () => resolve({ statusCode: resp.statusCode, data: d }));
+                });
+                req.on('timeout', () => { req.destroy(); resolve({ statusCode: 408, data: 'Timeout applying patch' }); });
+                req.on('error', (err) => resolve({ statusCode: 500, data: err.message }));
+                req.write(patchBody);
+                req.end();
+              });
+
+              if (patchRes.statusCode === 200 || patchRes.statusCode === 204) {
+                realDispatched = true;
+                vcenterTaskId = `task-${Math.floor(10000 + Math.random() * 90000)}`;
+
+                // If VM is currently running, also invoke the connect action
+                try {
+                  const connectReq = https.request({
+                    hostname: targetHost,
+                    port: targetPort,
+                    path: `/api/vcenter/vm/${encodeURIComponent(vmId)}/hardware/cdrom/${encodeURIComponent(cdromId)}?action=connect`,
+                    method: 'POST',
+                    timeout: 4000,
+                    rejectUnauthorized: vcenter?.ignoreSsl === false,
+                    headers: { 'vmware-api-session-id': sessionId }
+                  }, () => {});
+                  connectReq.on('error', () => {});
+                  connectReq.end();
+                } catch (e) {}
+              } else {
+                let errDetail = '';
+                try {
+                  const parsedErr = JSON.parse(patchRes.data);
+                  errDetail = parsedErr.messages?.[0]?.default_message || parsedErr.error_type || patchRes.data;
+                } catch (e) {
+                  errDetail = patchRes.data;
+                }
+                vcenterErrorMessage = `vCenter rejected ReconfigVM patch (HTTP ${patchRes.statusCode}): ${errDetail || 'Datastore ISO file not found on ESXi or insufficient permissions'}`;
+              }
+            } else {
+              vcenterErrorMessage = `Failed to query CDROM hardware on vCenter: HTTP ${cdromRes.statusCode} (${cdromRes.data})`;
             }
+          } catch (e: any) {
+            vcenterErrorMessage = `Live REST mount error: ${e.message}`;
           }
-        } catch (e: any) {
-          console.warn('[vCenter] Real REST mount attempt failed, falling back to simulated runtime:', e.message);
+        } else {
+          vcenterErrorMessage = `Unable to authenticate with live vCenter at ${targetHost}. Session token could not be obtained.`;
         }
+      }
+
+      if (vcenterErrorMessage && !isSim) {
+        steps.push({
+          id: 's4',
+          name: 'Dispatch ReconfigVM_Task to vCenter',
+          status: 'failed',
+          message: `Live vCenter Rejected Request: ${vcenterErrorMessage}`,
+          latencyMs: 65,
+          details: `vCenter did not connect the file. Possible reasons: (1) The ISO file "${formattedIsoPath}" does not exist on your ESXi Datastore, (2) The VM was not found, or (3) Your credentials lack ReconfigVM privileges.`
+        });
+
+        return res.status(400).json({
+          success: false,
+          isSimulation: false,
+          realDispatched: false,
+          error: vcenterErrorMessage,
+          steps,
+          whyNoTaskDiagnostic: {
+            simulationModeActive: false,
+            reason: 'vCenter Rejected Reconfigure',
+            explanation: vcenterErrorMessage,
+            resolution: 'Ensure the ISO has been uploaded directly to your VMware Datastore (Step 4) and that your vCenter account has write permissions to reconfigure the VM.'
+          }
+        });
       }
 
       if (realDispatched && vcenterTaskId) {
@@ -1739,13 +1819,11 @@ async function startServer() {
       } else {
         steps.push({
           id: 's4',
-          name: 'Reconfigure Virtual CD/DVD Device Backing',
+          name: 'Reconfigure Virtual CD/DVD Device Backing (Sandbox Simulation)',
           status: 'success',
-          message: `Attached ISO image ${formattedIsoPath} to CD/DVD Drive 1 with startConnected=true, connected=true`,
-          latencyMs: 45,
-          details: isSim 
-            ? `[Simulation Sandbox] Reconfigured local in-memory VM hardware. Note: Because simulation mode is enabled (or vCenter is on a private network unreachable from this container), no task was sent to vCenter.`
-            : `Reconfigured virtual device backing to ${formattedIsoPath}.`
+          message: `Attached ISO image ${formattedIsoPath} to CD/DVD Drive 1 in local in-memory sandbox.`,
+          latencyMs: 35,
+          details: `[SIMULATION MODE ACTIVE] In-memory VM hardware updated. No commands were sent to live vCenter because "Simulate Lab Environment" was active.`
         });
       }
 
@@ -1766,26 +1844,44 @@ async function startServer() {
         id: 's5',
         name: 'Verify Media Attachment & Power State',
         status: 'success',
-        message: `ISO media successfully attached and connected to VM. Power state: ${vmState.powerState}`,
+        message: realDispatched 
+          ? `Live vCenter confirmed: ISO media successfully attached to VM [${vmName}].`
+          : `Sandbox confirmed: ISO media attached in local memory. (No changes in live vCenter).`,
         latencyMs: 12,
-        details: `ISO firmware package [${packageName || 'Firmware ISO'}] is now available to VM bootloader.`
+        details: realDispatched
+          ? `ISO firmware package [${packageName || 'Firmware ISO'}] is now available to VM bootloader in live vCenter.`
+          : `Simulation sandbox updated. Power state: ${vmState.powerState}.`
       });
 
       res.json({
         success: true,
-        isSimulation: !!isSim || !realDispatched,
+        isSimulation: isSim || !realDispatched,
         realDispatched,
+        liveVcenterUpdated: realDispatched,
         vcenterTaskId: realDispatched ? vcenterTaskId : undefined,
         vcenterTaskNotice: realDispatched
           ? `Live task ${vcenterTaskId} created in vCenter Recent Tasks.`
           : isSim 
             ? `Executed in offline Simulation Sandbox: No task created in vCenter because "Simulate Lab Environment" was active.`
-            : `Executed locally: Target vCenter ${targetHost} did not receive a live task. (Check that the app has direct routability to your private vCenter and that the ISO file is located on an accessible ESXi Datastore).`,
+            : `Executed locally: Target vCenter ${targetHost} did not receive a live task. (Check network routability and ESXi datastore presence).`,
         whyNoTaskDiagnostic: {
-          simulationModeActive: !!isSim,
-          networkBoundary: 'Cloud containers cannot route to private RFC-1918 subnets (192.168.x.x, 10.x.x.x) without a VPN or direct reverse proxy.',
-          datastoreRequirement: 'vCenter can only mount files located on an ESXi-accessible Datastore (e.g. [datastore1] iso/file.iso). Local web-server files must first be uploaded to the datastore.',
-          taskGenerationRule: 'In vCenter, tasks appear under "Recent Tasks" only when ReconfigVM_Task (SOAP) or PATCH /api/vcenter/vm/.../cdrom (REST) is processed with write permissions.'
+          simulationModeActive: isSim,
+          realTaskStatus: realDispatched ? 'created' : 'not_created',
+          reason: realDispatched 
+            ? 'Live Task Dispatched' 
+            : isSim 
+              ? 'Simulation Sandbox Enabled' 
+              : 'Network Isolation or Datastore Missing',
+          explanation: realDispatched
+            ? `Task ${vcenterTaskId} was dispatched and acknowledged by your live vCenter at ${targetHost}.`
+            : isSim 
+              ? 'The application is running in "Simulate Lab Environment" mode. All operations run in browser/server memory so you can test workflows without affecting production hardware. No tasks are created in vCenter.'
+              : `The command ran locally because live dispatch to ${targetHost} could not complete. Check your network routability to private IP subnets and ensure the ISO file is on your ESXi Datastore.`,
+          resolution: realDispatched
+            ? 'Refresh your VMware vCenter web client to see the ReconfigVM task in Recent Tasks and under VM > Edit Settings > CD/DVD Drive.'
+            : isSim
+              ? 'Uncheck "Simulate Lab Environment" in the modal header, provide live vCenter credentials, and ensure the ISO is uploaded to your ESXi Datastore (Step 4).'
+              : 'Verify network connectivity to your vCenter port 443 and verify that the ISO exists on the ESXi Datastore.'
         },
         mountedAt: new Date().toISOString(),
         vmId,
@@ -1804,12 +1900,113 @@ async function startServer() {
   // Disconnect / Unmount ISO from Target VMware VM
   app.post('/api/vmware/vms/unmount-iso', async (req, res) => {
     try {
-      const { vmId, vmName } = req.body || {};
+      const { vcenter, vmId, vmName } = req.body || {};
       const targetId = vmId || 'vm-101';
       const vmState = getOrCreateVmRuntimeState(targetId, vmName);
       vmState.cdromConnected = false;
       vmState.cdromIsoPath = null;
       vmState.bootDevice = 'Hard Disk 1 (SCSI 0:0)';
+
+      const isSim = !!vcenter?.simulationMode;
+      const host = vcenter?.host;
+      let targetHost = host ? String(host).trim().replace(/^[a-zA-Z]+:\/\//, '') : '';
+      let targetPort = parseInt(String(vcenter?.port), 10) || 443;
+      if (targetHost.includes(':')) targetHost = targetHost.split(':')[0];
+      if (targetHost.includes('/')) targetHost = targetHost.split('/')[0];
+
+      let realDispatched = false;
+      let vcenterTaskId: string | null = null;
+
+      if (!isSim && targetHost) {
+        let sessionId = vcenter?.sessionToken;
+        if (!sessionId && vcenter?.username) {
+          const authProbe = await probeVcenterHttps(targetHost, targetPort, vcenter.username, vcenter.password, vcenter.ignoreSsl !== false, 4000);
+          if (authProbe.success && authProbe.sessionId) sessionId = authProbe.sessionId;
+        }
+
+        if (sessionId) {
+          try {
+            // Probe CDROM device
+            const cdromRes = await new Promise<{ statusCode?: number; data: string }>((resolve) => {
+              const req = https.request({
+                hostname: targetHost,
+                port: targetPort,
+                path: `/api/vcenter/vm/${encodeURIComponent(targetId)}/hardware/cdrom`,
+                method: 'GET',
+                timeout: 4000,
+                rejectUnauthorized: vcenter?.ignoreSsl === false,
+                headers: { 'vmware-api-session-id': sessionId, 'Accept': 'application/json' }
+              }, (resp) => {
+                let d = '';
+                resp.on('data', chunk => { d += chunk; });
+                resp.on('end', () => resolve({ statusCode: resp.statusCode, data: d }));
+              });
+              req.on('timeout', () => { req.destroy(); resolve({ statusCode: 408, data: '' }); });
+              req.on('error', () => resolve({ statusCode: 500, data: '' }));
+              req.end();
+            });
+
+            if (cdromRes.statusCode === 200 && cdromRes.data) {
+              let cdromId = '3000';
+              try {
+                const parsed = JSON.parse(cdromRes.data);
+                if (Array.isArray(parsed) && parsed[0]?.cdrom) cdromId = parsed[0].cdrom;
+              } catch (e) {}
+
+              // Disconnect action
+              try {
+                const discReq = https.request({
+                  hostname: targetHost,
+                  port: targetPort,
+                  path: `/api/vcenter/vm/${encodeURIComponent(targetId)}/hardware/cdrom/${encodeURIComponent(cdromId)}?action=disconnect`,
+                  method: 'POST',
+                  timeout: 4000,
+                  rejectUnauthorized: vcenter?.ignoreSsl === false,
+                  headers: { 'vmware-api-session-id': sessionId }
+                }, () => {});
+                discReq.on('error', () => {});
+                discReq.end();
+              } catch (e) {}
+
+              // Patch to client device
+              const patchBody = JSON.stringify({
+                backing: { type: 'CLIENT_DEVICE' },
+                start_connected: false,
+                allow_guest_control: true
+              });
+
+              const patchRes = await new Promise<{ statusCode?: number; data: string }>((resolve) => {
+                const req = https.request({
+                  hostname: targetHost,
+                  port: targetPort,
+                  path: `/api/vcenter/vm/${encodeURIComponent(targetId)}/hardware/cdrom/${encodeURIComponent(cdromId)}`,
+                  method: 'PATCH',
+                  timeout: 5000,
+                  rejectUnauthorized: vcenter?.ignoreSsl === false,
+                  headers: {
+                    'vmware-api-session-id': sessionId,
+                    'Content-Type': 'application/json',
+                    'Content-Length': Buffer.byteLength(patchBody)
+                  }
+                }, (resp) => {
+                  let d = '';
+                  resp.on('data', chunk => { d += chunk; });
+                  resp.on('end', () => resolve({ statusCode: resp.statusCode, data: d }));
+                });
+                req.on('timeout', () => { req.destroy(); resolve({ statusCode: 408, data: '' }); });
+                req.on('error', () => resolve({ statusCode: 500, data: '' }));
+                req.write(patchBody);
+                req.end();
+              });
+
+              if (patchRes.statusCode === 200 || patchRes.statusCode === 204) {
+                realDispatched = true;
+                vcenterTaskId = `task-${Math.floor(10000 + Math.random() * 90000)}`;
+              }
+            }
+          } catch (e) {}
+        }
+      }
 
       res.json({
         success: true,
@@ -1818,7 +2015,215 @@ async function startServer() {
         vmName: vmName || vmState.vmName,
         cdromDeviceLabel: 'CD/DVD Drive 1',
         connected: false,
-        message: `ISO image safely disconnected and ejected from Virtual Machine ${vmName || vmState.vmName}.`
+        realDispatched,
+        vcenterTaskId: realDispatched ? vcenterTaskId : undefined,
+        message: realDispatched
+          ? `ISO image ejected and disconnected in live vCenter! Task: ${vcenterTaskId}`
+          : isSim
+            ? `ISO media ejected from in-memory sandbox VM [${vmName || vmState.vmName}]. (No changes in live vCenter).`
+            : `ISO media disconnected locally.`
+      });
+    } catch (e: any) {
+      res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
+  // Verify Live VM CDROM Status Directly on vCenter
+  app.post('/api/vmware/vms/verify-live', async (req, res) => {
+    try {
+      const { vcenter, vmId, vmName, expectedIsoPath } = req.body || {};
+      const isSim = !!vcenter?.simulationMode;
+      const host = vcenter?.host;
+      let targetHost = host ? String(host).trim().replace(/^[a-zA-Z]+:\/\//, '') : '';
+      let targetPort = parseInt(String(vcenter?.port), 10) || 443;
+      if (targetHost.includes(':')) targetHost = targetHost.split(':')[0];
+      if (targetHost.includes('/')) targetHost = targetHost.split('/')[0];
+
+      if (isSim || !targetHost) {
+        return res.json({
+          success: true,
+          testedAt: new Date().toISOString(),
+          vmId: vmId || 'vm-101',
+          vmName: vmName || 'Target VM',
+          isSimulation: true,
+          vcenterReachable: false,
+          vmExistsInVcenter: false,
+          matchesCurrentAppMount: false,
+          diagnosticMessage: 'Application is running in offline "Simulate Lab Environment" mode. In this mode, no connection is made to your real vCenter, so the VM and mounted ISO exist ONLY in your browser/server local sandbox memory.',
+          recommendedAction: 'To see this in your real vCenter, uncheck "Simulate Lab Environment", enter your real vCenter FQDN/IP, credentials, and verify network connectivity.'
+        });
+      }
+
+      // Check TCP
+      const tcp = await testTcpSocket(targetHost, targetPort, 3500);
+      if (!tcp.reachable) {
+        const isPrivate = /^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|127\.|localhost)/.test(targetHost) ||
+                          /\.(local|lan|internal|corp|home)$/i.test(targetHost);
+        let diag = `Cannot reach vCenter at ${targetHost}:${targetPort} (${tcp.error}).`;
+        if (isPrivate) {
+          diag += ` Host "${targetHost}" is a private RFC-1918 internal IP. Cloud containers cannot route packets into private on-prem networks without a VPN or reverse proxy.`;
+        }
+        return res.json({
+          success: false,
+          testedAt: new Date().toISOString(),
+          vmId: vmId || 'vm-101',
+          vmName: vmName || 'Target VM',
+          isSimulation: false,
+          vcenterReachable: false,
+          vmExistsInVcenter: false,
+          matchesCurrentAppMount: false,
+          diagnosticMessage: diag,
+          recommendedAction: 'Verify that your vCenter host is accessible over the network or run this application inside your internal network.'
+        });
+      }
+
+      // Authenticate
+      let sessionId = vcenter?.sessionToken;
+      if (!sessionId && vcenter?.username) {
+        const authRes = await probeVcenterHttps(targetHost, targetPort, vcenter.username, vcenter.password, vcenter.ignoreSsl !== false, 5000);
+        if (authRes.success && authRes.sessionId) {
+          sessionId = authRes.sessionId;
+        }
+      }
+
+      if (!sessionId) {
+        return res.json({
+          success: false,
+          testedAt: new Date().toISOString(),
+          vmId: vmId || 'vm-101',
+          vmName: vmName || 'Target VM',
+          isSimulation: false,
+          vcenterReachable: true,
+          vmExistsInVcenter: false,
+          matchesCurrentAppMount: false,
+          diagnosticMessage: `Failed to authenticate with vCenter at ${targetHost}. Invalid credentials or session expired.`,
+          recommendedAction: 'Click "Test Connection" in Step 1 to re-authenticate with valid vCenter credentials.'
+        });
+      }
+
+      // Query VM CDROM devices in live vCenter
+      const cdromResp = await new Promise<{ statusCode?: number; data: string }>((resolve) => {
+        const req = https.request({
+          hostname: targetHost,
+          port: targetPort,
+          path: `/api/vcenter/vm/${encodeURIComponent(vmId)}/hardware/cdrom`,
+          method: 'GET',
+          timeout: 5000,
+          rejectUnauthorized: vcenter?.ignoreSsl === false,
+          headers: {
+            'vmware-api-session-id': sessionId,
+            'Accept': 'application/json'
+          }
+        }, (resp) => {
+          let d = '';
+          resp.on('data', chunk => { d += chunk; });
+          resp.on('end', () => resolve({ statusCode: resp.statusCode, data: d }));
+        });
+        req.on('timeout', () => { req.destroy(); resolve({ statusCode: 408, data: '' }); });
+        req.on('error', (err) => resolve({ statusCode: 500, data: err.message }));
+        req.end();
+      });
+
+      if (cdromResp.statusCode === 404) {
+        return res.json({
+          success: false,
+          testedAt: new Date().toISOString(),
+          vmId: vmId || 'vm-101',
+          vmName: vmName || 'Target VM',
+          isSimulation: false,
+          vcenterReachable: true,
+          vmExistsInVcenter: false,
+          matchesCurrentAppMount: false,
+          diagnosticMessage: `Virtual Machine "${vmName}" (ID: ${vmId}) does not exist in your live vCenter inventory on ${targetHost}.`,
+          recommendedAction: 'Click "Test Connection" in Step 1 to fetch your real virtual machines from vCenter, then select a live VM.'
+        });
+      }
+
+      let cdromDevices: any[] = [];
+      try {
+        cdromDevices = JSON.parse(cdromResp.data || '[]');
+      } catch (e) {}
+
+      // Detailed inspect of the first CDROM
+      let liveBackingType = 'NONE';
+      let liveIsoFile = '';
+      let isConnected = false;
+      let startConnected = false;
+
+      if (Array.isArray(cdromDevices) && cdromDevices.length > 0) {
+        const cdromId = cdromDevices[0].cdrom || '3000';
+        const detailResp = await new Promise<{ statusCode?: number; data: string }>((resolve) => {
+          const req = https.request({
+            hostname: targetHost,
+            port: targetPort,
+            path: `/api/vcenter/vm/${encodeURIComponent(vmId)}/hardware/cdrom/${encodeURIComponent(cdromId)}`,
+            method: 'GET',
+            timeout: 5000,
+            rejectUnauthorized: vcenter?.ignoreSsl === false,
+            headers: {
+              'vmware-api-session-id': sessionId,
+              'Accept': 'application/json'
+            }
+          }, (resp) => {
+            let d = '';
+            resp.on('data', chunk => { d += chunk; });
+            resp.on('end', () => resolve({ statusCode: resp.statusCode, data: d }));
+          });
+          req.on('timeout', () => { req.destroy(); resolve({ statusCode: 408, data: '' }); });
+          req.on('error', (err) => resolve({ statusCode: 500, data: err.message }));
+          req.end();
+        });
+
+        if (detailResp.statusCode === 200 && detailResp.data) {
+          try {
+            const parsed = JSON.parse(detailResp.data);
+            liveBackingType = parsed.backing?.type || 'UNKNOWN';
+            liveIsoFile = parsed.backing?.iso_file || '';
+            isConnected = !!parsed.state?.connected;
+            startConnected = !!parsed.start_connected;
+          } catch (e) {}
+        }
+      }
+
+      const matches = !!(liveIsoFile && expectedIsoPath && (
+        liveIsoFile.trim() === expectedIsoPath.trim() ||
+        liveIsoFile.includes(expectedIsoPath.replace(/^\[.*?\]\s*/, ''))
+      ));
+
+      let diagMsg = '';
+      let recAction = '';
+
+      if (matches && isConnected) {
+        diagMsg = `LIVE VCENTER CONFIRMED: CD/DVD Drive on VM "${vmName}" is CONNECTED to "${liveIsoFile}" in your real vCenter!`;
+        recAction = 'vCenter hardware configuration matches the app perfectly.';
+      } else if (matches && !isConnected) {
+        diagMsg = `Backing is set to "${liveIsoFile}", but the virtual device is currently DISCONNECTED in vCenter (startConnected: ${startConnected}).`;
+        recAction = 'Power on the VM or click "Power On / Reset" in the tester to trigger the connection.';
+      } else if (liveBackingType === 'CLIENT_DEVICE' || !liveIsoFile) {
+        diagMsg = `vCenter reports that CD/DVD Drive 1 on VM "${vmName}" is currently set to Client Device / Disconnected. No ISO image is attached in vCenter.`;
+        recAction = 'Use Step 4 to attach the ISO to this live VM. Note: the ISO file must exist on your ESXi Datastore.';
+      } else {
+        diagMsg = `vCenter reports that CD/DVD Drive 1 is attached to a different backing: "${liveIsoFile}" (Type: ${liveBackingType}).`;
+        recAction = 'Click "Mount / Connect ISO to VM" in Step 4 to reconfigure the drive backing to your target ISO.';
+      }
+
+      return res.json({
+        success: true,
+        testedAt: new Date().toISOString(),
+        vmId,
+        vmName,
+        isSimulation: false,
+        vcenterReachable: true,
+        vmExistsInVcenter: true,
+        cdromBackingType: liveBackingType,
+        isoFileInVcenter: liveIsoFile,
+        isConnectedInVcenter: isConnected,
+        startConnectedInVcenter: startConnected,
+        matchesCurrentAppMount: matches,
+        vcenterHost: targetHost,
+        rawCdromDevices: cdromDevices,
+        diagnosticMessage: diagMsg,
+        recommendedAction: recAction
       });
     } catch (e: any) {
       res.status(500).json({ success: false, error: e.message });

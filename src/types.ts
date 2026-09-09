@@ -281,6 +281,7 @@ export interface VmwareVcenterConfig {
   datastore?: string;
   ignoreSsl: boolean;
   simulationMode?: boolean;
+  sessionToken?: string;
 }
 
 export interface VmwareVmInfo {
@@ -381,6 +382,20 @@ export interface VmwareMountStep {
 export interface VmwareIsoMountResult {
   success: boolean;
   isSimulation?: boolean;
+  realDispatched?: boolean;
+  liveVcenterUpdated?: boolean;
+  vcenterTaskId?: string;
+  vcenterTaskNotice?: string;
+  whyNoTaskDiagnostic?: {
+    simulationModeActive: boolean;
+    networkBoundary: string;
+    datastoreRequirement: string;
+    taskGenerationRule: string;
+    realTaskStatus?: string;
+    reason?: string;
+    explanation?: string;
+    resolution?: string;
+  };
   mountedAt: string;
   vmName: string;
   vmId: string;
@@ -391,4 +406,25 @@ export interface VmwareIsoMountResult {
   steps: VmwareMountStep[];
   error?: string;
 }
+
+export interface VmwareLiveVerificationResult {
+  success: boolean;
+  testedAt: string;
+  vmId: string;
+  vmName: string;
+  isSimulation: boolean;
+  vcenterReachable: boolean;
+  vmExistsInVcenter: boolean;
+  cdromBackingType?: string;
+  isoFileInVcenter?: string;
+  isConnectedInVcenter?: boolean;
+  startConnectedInVcenter?: boolean;
+  matchesCurrentAppMount: boolean;
+  vcenterHost?: string;
+  rawCdromDevices?: any[];
+  diagnosticMessage: string;
+  recommendedAction: string;
+  error?: string;
+}
+
 

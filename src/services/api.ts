@@ -12,7 +12,8 @@ import {
   VmwareFileUploadResult,
   VmwarePowerStateResult,
   DiskVerificationResult,
-  ServerStorageFile
+  ServerStorageFile,
+  VmwareLiveVerificationResult
 } from '../types';
 import { 
   loadServers, 
@@ -270,6 +271,7 @@ export async function testVcenterConnection(config: VmwareVcenterConfig): Promis
   vcenterHost?: string;
   datacenter?: string;
   latencyMs?: number;
+  sessionToken?: string;
   vms?: VmwareVmInfo[];
   datastores?: string[];
   error?: string;
@@ -311,10 +313,16 @@ export async function mountIsoOnVmwareVm(mountReq: VmwareIsoMountRequest): Promi
   }
 }
 
-export async function unmountIsoFromVmwareVm(params: { vmId: string; vmName?: string }): Promise<{
+export async function unmountIsoFromVmwareVm(params: {
+  vmId: string;
+  vmName?: string;
+  vcenter?: VmwareVcenterConfig;
+}): Promise<{
   success: boolean;
   unmountedAt?: string;
   message?: string;
+  realDispatched?: boolean;
+  vcenterTaskId?: string;
   error?: string;
 }> {
   try {
@@ -326,6 +334,36 @@ export async function unmountIsoFromVmwareVm(params: { vmId: string; vmName?: st
     return await res.json();
   } catch (e: any) {
     return { success: false, error: e.message || 'ISO Unmount request failed' };
+  }
+}
+
+export async function verifyLiveVmwareCdrom(params: {
+  vcenter: VmwareVcenterConfig;
+  vmId: string;
+  vmName?: string;
+  expectedIsoPath?: string;
+}): Promise<VmwareLiveVerificationResult> {
+  try {
+    const res = await fetch('/api/vmware/vms/verify-live', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    });
+    return await res.json();
+  } catch (e: any) {
+    return {
+      success: false,
+      testedAt: new Date().toISOString(),
+      vmId: params.vmId,
+      vmName: params.vmName || 'Target VM',
+      isSimulation: !!params.vcenter?.simulationMode,
+      vcenterReachable: false,
+      vmExistsInVcenter: false,
+      matchesCurrentAppMount: false,
+      diagnosticMessage: `Request to verify live vCenter failed: ${e.message}`,
+      recommendedAction: 'Check your vCenter hostname, credentials, and network connectivity.',
+      error: e.message
+    };
   }
 }
 

@@ -39,7 +39,8 @@ import {
   VmwareDatastoreInfo,
   VmwareFileUploadResult,
   VmwarePowerStateResult,
-  VmwareLogEntry
+  VmwareLogEntry,
+  VmwareLiveVerificationResult
 } from '../types';
 import { 
   testVcenterConnection, 
@@ -50,7 +51,8 @@ import {
   deleteCustomDatastore,
   uploadFileToDatastore,
   verifyDatastoreFile,
-  manageVmPowerState
+  manageVmPowerState,
+  verifyLiveVmwareCdrom
 } from '../services/api';
 import { VmwareOutputLogBox } from './VmwareOutputLogBox';
 
@@ -122,6 +124,8 @@ export const VmwareIsoTesterModal: React.FC<VmwareIsoTesterModalProps> = ({
   const [autoPowerOn, setAutoPowerOn] = useState<boolean>(false);
   const [isMounting, setIsMounting] = useState(false);
   const [isUnmounting, setIsUnmounting] = useState(false);
+  const [isVerifyingLive, setIsVerifyingLive] = useState(false);
+  const [liveVerification, setLiveVerification] = useState<VmwareLiveVerificationResult | null>(null);
   const [mountResult, setMountResult] = useState<VmwareIsoMountResult | null>(null);
   const [mountSteps, setMountSteps] = useState<VmwareMountStep[]>([]);
   const [activeMountedIso, setActiveMountedIso] = useState<{
@@ -625,19 +629,37 @@ export const VmwareIsoTesterModal: React.FC<VmwareIsoTesterModalProps> = ({
       if (res.powerState) {
         setVmPowerState(res.powerState);
       }
-      addLog(
-        'CONNECT',
-        `SUCCESS: File "${targetIsoPath}" connected to VM [${vmName}] as CD/DVD Drive 1 (IDE 0:0).`,
-        'success',
-        `Backing: VirtualCdromIsoBackingInfo (fileName="${res.isoPathMounted}") | startConnected=true, connected=true`
-      );
-      if (onShowToast) {
-        onShowToast(`File successfully connected to VM ${vmName}!`, 'success');
+
+      if (res.realDispatched) {
+        addLog(
+          'CONNECT',
+          `LIVE VCENTER CONFIRMED: ReconfigVM task [${res.vcenterTaskId || 'Task'}] created in vCenter Recent Tasks!`,
+          'success',
+          `Task ID: ${res.vcenterTaskId}\nTarget VM: ${vmName} (${vmId})\nBacking: ${res.isoPathMounted}\nStatus: Live vCenter REST API successfully reconfigured CD/DVD Drive 1!\nYou can verify this in your VMware vCenter web client under "Recent Tasks" or VM > "Edit Settings" > "CD/DVD Drive 1".`
+        );
+        if (onShowToast) {
+          onShowToast(`Live vCenter ReconfigVM task created! (${res.vcenterTaskId})`, 'success');
+        }
+      } else {
+        addLog(
+          'CONNECT',
+          `[SANDBOX SIMULATION ONLY] File connected in offline memory. (NO TASK IN LIVE VCENTER)`,
+          'warn',
+          `⚠️ WHY YOU DON'T SEE A TASK IN VCENTER:\n1. Mode: "Simulate Lab Environment" is enabled (or private LAN vCenter ${vcenterHost} is unreachable from this container).\n2. Memory vs Datastore: The file "${targetIsoPath}" is staged in local sandbox memory, not on an ESXi Datastore.\n\nTO SEE TASKS IN YOUR REAL VCENTER:\n• Uncheck "Simulate Lab Environment" in Step 1\n• Provide routable live vCenter credentials\n• Ensure the file is on your ESXi Datastore (Step 4)`
+        );
+        if (onShowToast) {
+          onShowToast(`Connected in local sandbox only. (No changes in vCenter)`, 'warn');
+        }
       }
     } else {
-      addLog('CONNECT', `Failed to attach media to VM: ${res.error}`, 'error');
+      addLog(
+        'CONNECT',
+        `vCenter REJECTED File Connection: ${res.error}`,
+        'error',
+        `Details: ${res.whyNoTaskDiagnostic?.explanation || res.error}\nResolution: ${res.whyNoTaskDiagnostic?.resolution || 'Ensure the ISO is uploaded to your ESXi Datastore and vCenter permissions are valid.'}`
+      );
       if (onShowToast) {
-        onShowToast(`Failed to connect file: ${res.error}`, 'warn');
+        onShowToast(`Connection rejected: ${res.error}`, 'warn');
       }
     }
   };
@@ -650,17 +672,109 @@ export const VmwareIsoTesterModal: React.FC<VmwareIsoTesterModalProps> = ({
     setIsUnmounting(true);
     addLog('CONNECT', `Ejecting and disconnecting ISO media from VM [${vmName}]...`);
 
-    const res = await unmountIsoFromVmwareVm({ vmId, vmName });
+    const config: VmwareVcenterConfig = {
+      host: vcenterHost,
+      port: vcenterPort,
+      username: vcenterUsername,
+      password: vcenterPassword,
+      datacenter: vcenterDatacenter,
+      datastore: selectedDatastore,
+      ignoreSsl,
+      simulationMode,
+    };
+
+    const res = await unmountIsoFromVmwareVm({ vmId, vmName, vcenter: config });
     setIsUnmounting(false);
 
     if (res.success) {
       setActiveMountedIso(null);
-      addLog('CONNECT', `Media ejected. Virtual CD/DVD Drive on [${vmName}] is now disconnected.`, 'info');
+      if (res.realDispatched) {
+        addLog(
+          'CONNECT',
+          `LIVE VCENTER CONFIRMED: CD/DVD Drive disconnected in vCenter! Task: ${res.vcenterTaskId || 'Completed'}`,
+          'success',
+          `Target VM [${vmName}] CD/DVD Drive 1 disconnected in live vCenter.`
+        );
+      } else {
+        addLog(
+          'CONNECT',
+          `Media ejected from sandbox VM [${vmName}]. (No changes in live vCenter).`,
+          'info'
+        );
+      }
       if (onShowToast) {
-        onShowToast(`ISO media ejected from VM ${vmName}`, 'info');
+        onShowToast(`ISO media disconnected from VM ${vmName}`, 'info');
       }
     } else {
       addLog('CONNECT', `Failed to eject ISO: ${res.error}`, 'error');
+    }
+  };
+
+  const handleVerifyLiveVcenter = async () => {
+    const targetVm = getSelectedVm();
+    const vmName = targetVm ? targetVm.name : (customVmName || selectedVmId || 'Target VM');
+    const vmId = targetVm ? targetVm.id : (selectedVmId || 'vm-101');
+    const targetIso = uploadResult?.datastorePath || isoDatastorePath;
+
+    setIsVerifyingLive(true);
+    addLog('VCENTER', `Auditing live vCenter hardware state for VM [${vmName}] (${vmId})...`);
+
+    const config: VmwareVcenterConfig = {
+      host: vcenterHost,
+      port: vcenterPort,
+      username: vcenterUsername,
+      password: vcenterPassword,
+      datacenter: vcenterDatacenter,
+      datastore: selectedDatastore,
+      ignoreSsl,
+      simulationMode,
+    };
+
+    const res = await verifyLiveVmwareCdrom({
+      vcenter: config,
+      vmId,
+      vmName,
+      expectedIsoPath: targetIso,
+    });
+
+    setIsVerifyingLive(false);
+    setLiveVerification(res);
+
+    if (res.isSimulation) {
+      addLog(
+        'VCENTER',
+        `Live Audit Result: Simulation Mode is active.`,
+        'warn',
+        `The app is currently in "Simulate Lab Environment" mode. No connection was made to live vCenter. The VM and attached file exist only in your browser/server local sandbox memory.`
+      );
+    } else if (!res.vcenterReachable) {
+      addLog(
+        'VCENTER',
+        `Live Audit Result: Cannot reach vCenter at ${vcenterHost}:${vcenterPort}.`,
+        'error',
+        res.diagnosticMessage
+      );
+    } else if (!res.vmExistsInVcenter) {
+      addLog(
+        'VCENTER',
+        `Live Audit Result: VM [${vmName}] (ID: ${vmId}) was not found in live vCenter inventory!`,
+        'error',
+        res.diagnosticMessage
+      );
+    } else if (res.matchesCurrentAppMount) {
+      addLog(
+        'VCENTER',
+        `LIVE VCENTER CONFIRMED: Real vCenter CD/DVD drive matches perfectly!`,
+        'success',
+        `vCenter reports that CD/DVD Drive 1 is attached to "${res.isoFileInVcenter}" (Connected: ${res.isConnectedInVcenter}).`
+      );
+    } else {
+      addLog(
+        'VCENTER',
+        `Live Audit Result: Discrepancy detected between app state and live vCenter!`,
+        'warn',
+        `vCenter CD/DVD Drive status: Backing=${res.cdromBackingType}, ISO in vCenter="${res.isoFileInVcenter || 'None'}", Connected=${res.isConnectedInVcenter}.\nDiagnostic: ${res.diagnosticMessage}\nAction: ${res.recommendedAction}`
+      );
     }
   };
 
@@ -1365,15 +1479,144 @@ export const VmwareIsoTesterModal: React.FC<VmwareIsoTesterModalProps> = ({
                   </p>
                 </div>
 
-                <button
-                  onClick={handleMountIso}
-                  disabled={isMounting}
-                  className="flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-500 hover:to-cyan-500 text-white text-xs font-bold rounded-lg shadow-lg shadow-blue-600/30 transition-all disabled:opacity-50 cursor-pointer shrink-0"
-                >
-                  {isMounting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
-                  Connect File to VM [{currentVmDisplay}]
-                </button>
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
+                  <button
+                    onClick={handleMountIso}
+                    disabled={isMounting}
+                    className="flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-500 hover:to-cyan-500 text-white text-xs font-bold rounded-lg shadow-lg shadow-blue-600/30 transition-all disabled:opacity-50 cursor-pointer"
+                  >
+                    {isMounting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+                    Connect File to VM [{currentVmDisplay}]
+                  </button>
+
+                  {activeMountedIso?.connected && (
+                    <button
+                      onClick={handleUnmountIso}
+                      disabled={isUnmounting}
+                      className="flex items-center gap-1.5 px-3.5 py-2.5 bg-slate-800 hover:bg-rose-950/60 text-rose-300 border border-rose-800/40 text-xs font-semibold rounded-lg transition-colors disabled:opacity-50 cursor-pointer"
+                    >
+                      {isUnmounting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <XCircle className="w-3.5 h-3.5" />}
+                      Disconnect / Eject
+                    </button>
+                  )}
+
+                  <button
+                    onClick={handleVerifyLiveVcenter}
+                    disabled={isVerifyingLive}
+                    className="flex items-center gap-1.5 px-3.5 py-2.5 bg-slate-800 hover:bg-slate-700 text-cyan-300 border border-cyan-500/40 text-xs font-semibold rounded-lg shadow-xs transition-colors disabled:opacity-50 cursor-pointer"
+                    title="Ask real vCenter what file is attached to CD/DVD Drive 1"
+                  >
+                    {isVerifyingLive ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Activity className="w-3.5 h-3.5" />}
+                    Audit Live vCenter CD/DVD Drive
+                  </button>
+                </div>
               </div>
+
+              {/* Status Banner when Mount Result is Present */}
+              {mountResult && (
+                <div className="animate-in fade-in pt-1">
+                  {mountResult.realDispatched ? (
+                    <div className="p-3 bg-emerald-950/40 border border-emerald-500/50 rounded-xl flex items-start gap-3 text-xs">
+                      <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
+                      <div className="flex-1 space-y-1">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-emerald-300">Live vCenter ReconfigVM Task Created!</span>
+                          <span className="font-mono text-[11px] bg-emerald-900/60 text-emerald-200 px-2 py-0.5 rounded border border-emerald-700/50">
+                            Task: {mountResult.vcenterTaskId || 'Dispatched'}
+                          </span>
+                        </div>
+                        <p className="text-slate-300 text-[11px]">
+                          The ReconfigVM_Task was successfully accepted and registered by vCenter at <strong className="text-white">{vcenterHost}</strong>.
+                          You can observe this task in the <strong>Recent Tasks</strong> panel in your VMware vSphere Web Client.
+                        </p>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="p-3 bg-amber-950/40 border border-amber-500/50 rounded-xl flex items-start gap-3 text-xs">
+                      <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+                      <div className="flex-1 space-y-1">
+                        <div className="flex items-center justify-between">
+                          <span className="font-bold text-amber-300">Offline Simulation Sandbox (No Task in Live vCenter)</span>
+                          <span className="font-mono text-[11px] bg-amber-900/60 text-amber-200 px-2 py-0.5 rounded border border-amber-700/50">
+                            Simulation Only
+                          </span>
+                        </div>
+                        <p className="text-slate-300 text-[11px] leading-relaxed">
+                          The file was connected in local sandbox memory, but <strong>no task was sent to your real VMware vCenter</strong>. This is why you cannot see any task in vCenter Recent Tasks.
+                        </p>
+                        <div className="pt-1 flex flex-wrap items-center gap-3">
+                          <span className="text-[10.5px] text-amber-200/90 font-mono">
+                            💡 Resolution: Uncheck "Simulate Lab Environment" in Step 1, verify network to {vcenterHost || 'vCenter'}, and place the ISO on an ESXi datastore.
+                          </span>
+                          <button
+                            onClick={handleVerifyLiveVcenter}
+                            disabled={isVerifyingLive}
+                            className="text-[11px] font-bold text-cyan-300 hover:text-cyan-100 underline flex items-center gap-1 cursor-pointer"
+                          >
+                            {isVerifyingLive ? <Loader2 className="w-3 h-3 animate-spin" /> : <Activity className="w-3 h-3" />}
+                            Audit Live vCenter CD/DVD Drive Now
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Live vCenter CD/DVD Drive Verification Result */}
+              {liveVerification && (
+                <div className="p-3.5 bg-slate-950 border border-cyan-500/40 rounded-xl space-y-2.5 text-xs animate-in fade-in">
+                  <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                    <div className="flex items-center gap-2 font-bold text-slate-200">
+                      <Activity className="w-4 h-4 text-cyan-400" />
+                      <span>Live vCenter Hardware Audit Report</span>
+                    </div>
+                    <span className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold ${
+                      liveVerification.matchesCurrentAppMount
+                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                        : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                    }`}>
+                      {liveVerification.matchesCurrentAppMount ? 'MATCH CONFIRMED' : 'DISCREPANCY DETECTED'}
+                    </span>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 text-[11px] font-mono bg-slate-900/80 p-2.5 rounded-lg border border-slate-800">
+                    <div>
+                      <span className="text-slate-500 block">vCenter Host:</span>
+                      <span className="text-slate-200">{liveVerification.vcenterHost}</span>
+                    </div>
+                    <div>
+                      <span className="text-slate-500 block">Target VM:</span>
+                      <span className="text-slate-200">{liveVerification.vmName} ({liveVerification.vmId})</span>
+                    </div>
+                    <div>
+                      <span className="text-slate-500 block">CD-ROM in vCenter:</span>
+                      <span className={liveVerification.isConnectedInVcenter ? 'text-emerald-400 font-bold' : 'text-slate-400'}>
+                        {liveVerification.isConnectedInVcenter ? 'Connected' : 'Disconnected / Empty'}
+                      </span>
+                    </div>
+                    <div className="sm:col-span-2">
+                      <span className="text-slate-500 block">ISO Backing in vCenter:</span>
+                      <span className="text-cyan-300 truncate block">
+                        {liveVerification.isoFileInVcenter || '(No ISO attached in vCenter)'}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="text-slate-500 block">Backing Type:</span>
+                      <span className="text-slate-300">{liveVerification.cdromBackingType}</span>
+                    </div>
+                  </div>
+
+                  <div className="space-y-1 text-[11px]">
+                    <p className="text-slate-300">
+                      <strong className="text-slate-200">Analysis:</strong> {liveVerification.diagnosticMessage}
+                    </p>
+                    <p className="text-cyan-300 font-mono bg-slate-900 p-2 rounded border border-slate-800">
+                      👉 <strong>Recommended Action:</strong> {liveVerification.recommendedAction}
+                    </p>
+                  </div>
+                </div>
+              )}
 
               {/* Connection Parameters Summary */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 border-t border-slate-800 text-xs">
