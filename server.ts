@@ -275,6 +275,199 @@ async function startServer() {
   });
 
   // -------------------------------------------------------------
+  // VMware vCenter & Virtual Machine ISO Package Testing Endpoints
+  // -------------------------------------------------------------
+
+  // Test vCenter Connection & Discover Virtual Machines
+  app.post('/api/vmware/vcenter/test-connection', async (req, res) => {
+    try {
+      const { host, port = 443, username, password, datacenter = 'Datacenter-01' } = req.body || {};
+      
+      if (!host || !username) {
+        return res.status(400).json({ success: false, error: 'vCenter Host and Username are required.' });
+      }
+
+      // Simulate vCenter SOAP / REST session authentication delay
+      await new Promise((r) => setTimeout(r, 600));
+
+      const mockVms = [
+        {
+          id: 'vm-101',
+          name: 'esxi-test-node-01.lab.local',
+          powerState: 'poweredOn',
+          guestOs: 'VMware ESXi 8.0.2',
+          cpus: 8,
+          memoryMb: 32768,
+          ipAddress: '192.168.10.51',
+          cdromBacking: {
+            connected: false,
+            startConnected: true,
+            isoPath: '',
+            deviceLabel: 'CD/DVD Drive 1'
+          }
+        },
+        {
+          id: 'vm-102',
+          name: 'esxi-test-node-02.lab.local',
+          powerState: 'poweredOn',
+          guestOs: 'VMware ESXi 8.0.2',
+          cpus: 8,
+          memoryMb: 32768,
+          ipAddress: '192.168.10.52',
+          cdromBacking: {
+            connected: false,
+            startConnected: true,
+            isoPath: '',
+            deviceLabel: 'CD/DVD Drive 1'
+          }
+        },
+        {
+          id: 'vm-103',
+          name: 'vmware-firmware-staging-vm',
+          powerState: 'poweredOff',
+          guestOs: 'Other 64-bit Linux / ESXi Installer',
+          cpus: 4,
+          memoryMb: 16384,
+          ipAddress: '192.168.10.89',
+          cdromBacking: {
+            connected: false,
+            startConnected: true,
+            isoPath: '',
+            deviceLabel: 'CD/DVD Drive 1'
+          }
+        },
+        {
+          id: 'vm-104',
+          name: 'hpe-proliant-testbench-vm',
+          powerState: 'poweredOn',
+          guestOs: 'VMware ESXi 7.0.3',
+          cpus: 16,
+          memoryMb: 65536,
+          ipAddress: '192.168.10.95',
+          cdromBacking: {
+            connected: true,
+            startConnected: true,
+            isoPath: '[datastore1] iso/P89201_SPP_2026.08.0.iso',
+            deviceLabel: 'CD/DVD Drive 1'
+          }
+        }
+      ];
+
+      res.json({
+        success: true,
+        authenticated: true,
+        vcenterHost: host,
+        datacenter,
+        sessionToken: `vmware-session-${Math.random().toString(36).substr(2, 9)}`,
+        latencyMs: Math.floor(Math.random() * 25) + 12,
+        vms: mockVms,
+        datastores: ['vsanDatastore', 'datastore1', 'nfs-firmware-repository']
+      });
+    } catch (e: any) {
+      res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
+  // Connect / Mount Firmware ISO on Target VMware VM
+  app.post('/api/vmware/vms/mount-iso', async (req, res) => {
+    try {
+      const { vcenter, vmId, vmName, packageName, isoDatastorePath, autoPowerOn = false } = req.body || {};
+
+      if (!vmId || !isoDatastorePath) {
+        return res.status(400).json({ success: false, error: 'VM ID and ISO Datastore Path are required.' });
+      }
+
+      const steps = [];
+
+      // Step 1: Connect vCenter API
+      steps.push({
+        id: 's1',
+        name: 'Authenticate vSphere Session API',
+        status: 'success',
+        message: `Successfully connected to vCenter Server ${vcenter?.host || 'vcenter.lab.local'} as ${vcenter?.username || 'administrator@vsphere.local'}`,
+        latencyMs: 14,
+        details: 'TLS 1.3 encrypted REST/SOAP session established. Session ID: vmware-sess-8f3a91'
+      });
+
+      // Step 2: Query Target VM Hardware
+      steps.push({
+        id: 's2',
+        name: 'Locate Virtual Machine Hardware Devices',
+        status: 'success',
+        message: `Target VM [${vmName || vmId}] found in datacenter inventory. Located VirtualCDROM device on IDE Controller 0:0`,
+        latencyMs: 18,
+        details: 'VirtualCDROM: IDE 0:0, Key: 3000, Summary: CD/DVD Drive 1'
+      });
+
+      // Step 3: Verify Firmware ISO Image
+      const formattedIsoPath = isoDatastorePath.startsWith('[') ? isoDatastorePath : `[datastore1] ${isoDatastorePath}`;
+      steps.push({
+        id: 's3',
+        name: 'Validate Datastore ISO Image Integrity',
+        status: 'success',
+        message: `Verified ISO file format and read permissions at path: ${formattedIsoPath}`,
+        latencyMs: 32,
+        details: 'ISO9660 format detected. Bootable header signatures verified. File size checked.'
+      });
+
+      // Step 4: Reconfigure VM Hardware (Mount ISO)
+      steps.push({
+        id: 's4',
+        name: 'Reconfigure Virtual CD/DVD Device Backing',
+        status: 'success',
+        message: `Attached ISO image ${formattedIsoPath} to CD/DVD Drive 1 with startConnected=true, connected=true`,
+        latencyMs: 45,
+        details: `VirtualCdromIsoBackingInfo: fileName=${formattedIsoPath}`
+      });
+
+      // Step 5: Verify Connection & Media Status
+      const finalPowerState = autoPowerOn ? 'poweredOn' : 'poweredOff';
+      steps.push({
+        id: 's5',
+        name: 'Verify Media Attachment & Power State',
+        status: 'success',
+        message: `ISO media successfully attached and connected to VM. Power state: ${finalPowerState}`,
+        latencyMs: 12,
+        details: `ISO firmware package [${packageName || 'Firmware ISO'}] is now available to VM bootloader.`
+      });
+
+      res.json({
+        success: true,
+        mountedAt: new Date().toISOString(),
+        vmId,
+        vmName: vmName || 'Target VMware VM',
+        isoPathMounted: formattedIsoPath,
+        cdromDeviceLabel: 'CD/DVD Drive 1',
+        connected: true,
+        powerState: finalPowerState,
+        steps
+      });
+    } catch (e: any) {
+      res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
+  // Disconnect / Unmount ISO from Target VMware VM
+  app.post('/api/vmware/vms/unmount-iso', async (req, res) => {
+    try {
+      const { vmId, vmName } = req.body || {};
+
+      res.json({
+        success: true,
+        unmountedAt: new Date().toISOString(),
+        vmId: vmId || 'vm-101',
+        vmName: vmName || 'Target VMware VM',
+        cdromDeviceLabel: 'CD/DVD Drive 1',
+        connected: false,
+        message: `ISO image safely disconnected and ejected from Virtual Machine ${vmName || vmId}.`
+      });
+    } catch (e: any) {
+      res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
+
+  // -------------------------------------------------------------
   // Frontend Serving (Vite middleware in dev, Static in production)
   // -------------------------------------------------------------
   if (process.env.NODE_ENV !== 'production') {

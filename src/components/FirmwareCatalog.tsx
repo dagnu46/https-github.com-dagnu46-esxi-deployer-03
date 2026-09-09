@@ -27,7 +27,8 @@ import {
   ExternalLink,
   Table,
   GitBranch,
-  Link2
+  Link2,
+  Disc
 } from 'lucide-react';
 import { FirmwarePackage, ComponentType, ServerModel, SeverityLevel, Server } from '../types';
 import { FirmwareDependencyVisualizer } from './FirmwareDependencyVisualizer';
@@ -40,6 +41,7 @@ interface FirmwareCatalogProps {
   onDeletePackage?: (pkgId: string) => void;
   onDeployPackage: (pkg: FirmwarePackage) => void;
   onQuickUpgradeServer?: (server: Server, component: ComponentType) => void;
+  onOpenVmwareIsoTester?: (pkg?: FirmwarePackage) => void;
 }
 
 const ALL_MODELS: ServerModel[] = [
@@ -60,6 +62,7 @@ export const FirmwareCatalog: React.FC<FirmwareCatalogProps> = ({
   onDeletePackage,
   onDeployPackage,
   onQuickUpgradeServer,
+  onOpenVmwareIsoTester,
 }) => {
   // View mode: repository package cards vs fleet matrix cross-reference vs component dependencies
   const [viewMode, setViewMode] = useState<'packages' | 'matrix' | 'dependencies'>('packages');
@@ -369,6 +372,18 @@ export const FirmwareCatalog: React.FC<FirmwareCatalogProps> = ({
               <span>Dependencies & Incompatibilities</span>
             </button>
           </div>
+
+          {onOpenVmwareIsoTester && (
+            <button
+              type="button"
+              id="btn-open-vmware-iso-tester"
+              onClick={() => onOpenVmwareIsoTester()}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-cyan-600 hover:bg-cyan-700 text-white rounded-lg text-xs font-semibold shadow-xs transition-colors"
+            >
+              <Disc className="w-4 h-4" />
+              <span>VMware VM Mount Tester</span>
+            </button>
+          )}
 
           <button
             type="button"
@@ -711,15 +726,29 @@ export const FirmwareCatalog: React.FC<FirmwareCatalogProps> = ({
                         )}
                       </div>
 
-                      <button
-                        type="button"
-                        id={`btn-deploy-pkg-${pkg.id}`}
-                        onClick={() => onDeployPackage(pkg)}
-                        className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold shadow-xs transition-colors"
-                      >
-                        <Play className="w-3.5 h-3.5 fill-current" />
-                        <span>Deploy Version to Fleet</span>
-                      </button>
+                      <div className="flex items-center space-x-2">
+                        {onOpenVmwareIsoTester && (
+                          <button
+                            type="button"
+                            onClick={() => onOpenVmwareIsoTester(pkg)}
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-cyan-50 hover:bg-cyan-100 text-cyan-800 border border-cyan-200 rounded-lg text-xs font-semibold transition-colors"
+                            title="Connect and test mounting this ISO on a VMware Virtual Machine via vCenter"
+                          >
+                            <Disc className="w-3.5 h-3.5 text-cyan-600" />
+                            <span>Test ISO on VMware VM</span>
+                          </button>
+                        )}
+
+                        <button
+                          type="button"
+                          id={`btn-deploy-pkg-${pkg.id}`}
+                          onClick={() => onDeployPackage(pkg)}
+                          className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold shadow-xs transition-colors"
+                        >
+                          <Play className="w-3.5 h-3.5 fill-current" />
+                          <span>Deploy Version to Fleet</span>
+                        </button>
+                      </div>
                     </div>
                   </div>
                 );

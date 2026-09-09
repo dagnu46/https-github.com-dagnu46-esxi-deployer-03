@@ -1,4 +1,4 @@
-import { Server, FirmwarePackage, AuditRecord, BaselineConfig, UpgradeCampaign } from '../types';
+import { Server, FirmwarePackage, AuditRecord, BaselineConfig, UpgradeCampaign, VmwareVcenterConfig, VmwareIsoMountRequest, VmwareIsoMountResult, VmwareVmInfo } from '../types';
 import { 
   loadServers, 
   saveServers, 
@@ -243,3 +243,72 @@ export async function syncSaveCampaign(campaign: UpgradeCampaign | null): Promis
     });
   } catch (e) {}
 }
+
+// -------------------------------------------------------------
+// VMware vCenter & Virtual Machine ISO Testing
+// -------------------------------------------------------------
+
+export async function testVcenterConnection(config: VmwareVcenterConfig): Promise<{
+  success: boolean;
+  authenticated: boolean;
+  vcenterHost?: string;
+  datacenter?: string;
+  latencyMs?: number;
+  vms?: VmwareVmInfo[];
+  datastores?: string[];
+  error?: string;
+}> {
+  try {
+    const res = await fetch('/api/vmware/vcenter/test-connection', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(config),
+    });
+    return await res.json();
+  } catch (e: any) {
+    return { success: false, authenticated: false, error: e.message || 'Failed to reach vCenter Server' };
+  }
+}
+
+export async function mountIsoOnVmwareVm(mountReq: VmwareIsoMountRequest): Promise<VmwareIsoMountResult> {
+  try {
+    const res = await fetch('/api/vmware/vms/mount-iso', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(mountReq),
+    });
+    return await res.json();
+  } catch (e: any) {
+    return {
+      success: false,
+      mountedAt: new Date().toISOString(),
+      vmName: mountReq.vmName || 'Target VM',
+      vmId: mountReq.vmId,
+      isoPathMounted: mountReq.isoDatastorePath,
+      cdromDeviceLabel: 'CD/DVD Drive 1',
+      connected: false,
+      powerState: 'poweredOff',
+      steps: [],
+      error: e.message || 'ISO Mount API request failed'
+    };
+  }
+}
+
+export async function unmountIsoFromVmwareVm(params: { vmId: string; vmName?: string }): Promise<{
+  success: boolean;
+  unmountedAt?: string;
+  message?: string;
+  error?: string;
+}> {
+  try {
+    const res = await fetch('/api/vmware/vms/unmount-iso', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    });
+    return await res.json();
+  } catch (e: any) {
+    return { success: false, error: e.message || 'ISO Unmount request failed' };
+  }
+}
+

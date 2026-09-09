@@ -176,6 +176,7 @@ export interface FirmwarePackage {
   rebootRequired: boolean;
   vendor: string;
   fileName: string;
+  packageFormat?: 'ISO' | 'BIN' | 'FWPKG' | 'ZIP' | 'EXE';
   dependencies?: ComponentDependency[];
 }
 
@@ -231,3 +232,63 @@ export interface BaselineConfig {
   };
   enforceSecurityPatches: boolean;
 }
+
+export interface VmwareVcenterConfig {
+  host: string;
+  port: number;
+  username: string;
+  password?: string;
+  datacenter?: string;
+  datastore?: string;
+  ignoreSsl: boolean;
+}
+
+export interface VmwareVmInfo {
+  id: string;
+  name: string;
+  powerState: 'poweredOn' | 'poweredOff' | 'suspended';
+  guestOs: string;
+  cpus: number;
+  memoryMb: number;
+  ipAddress?: string;
+  cdromBacking?: {
+    connected: boolean;
+    startConnected: boolean;
+    isoPath?: string;
+    deviceLabel?: string;
+  };
+}
+
+export interface VmwareIsoMountRequest {
+  vcenter: VmwareVcenterConfig;
+  vmId: string;
+  vmName: string;
+  packageId?: string;
+  packageName?: string;
+  isoDatastorePath: string; // e.g., [datastore1] iso/firmware-update-v2.92.iso
+  autoPowerOn?: boolean;
+  cdromDeviceLabel?: string;
+}
+
+export interface VmwareMountStep {
+  id: string;
+  name: string;
+  status: 'pending' | 'running' | 'success' | 'failed' | 'skipped';
+  message: string;
+  latencyMs?: number;
+  details?: string;
+}
+
+export interface VmwareIsoMountResult {
+  success: boolean;
+  mountedAt: string;
+  vmName: string;
+  vmId: string;
+  isoPathMounted: string;
+  cdromDeviceLabel: string;
+  connected: boolean;
+  powerState: 'poweredOn' | 'poweredOff' | 'suspended';
+  steps: VmwareMountStep[];
+  error?: string;
+}
+

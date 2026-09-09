@@ -11,7 +11,8 @@ import {
   AlertTriangle, 
   Terminal,
   Database,
-  Trash2
+  Trash2,
+  Disc
 } from 'lucide-react';
 import { UpgradeCampaign } from '../types';
 import { DatabaseStatus } from '../services/api';
@@ -29,6 +30,7 @@ interface HeaderProps {
   criticalCount: number;
   dbStatus?: DatabaseStatus | null;
   onOpenDockerDb?: () => void;
+  onOpenVmwareIsoTester?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -42,6 +44,7 @@ export const Header: React.FC<HeaderProps> = ({
   criticalCount,
   dbStatus,
   onOpenDockerDb,
+  onOpenVmwareIsoTester,
 }) => {
   const isCampaignActive = activeCampaign && (activeCampaign.status === 'running' || activeCampaign.status === 'paused');
   const completedServers = activeCampaign ? activeCampaign.servers.filter(s => s.stage === 'completed').length : 0;
@@ -93,6 +96,19 @@ export const Header: React.FC<HeaderProps> = ({
               >
                 <Terminal className="w-3.5 h-3.5 text-indigo-600" />
                 <span>Campaign In Progress ({completedServers}/{totalCampaignServers})</span>
+              </button>
+            )}
+
+            {onOpenVmwareIsoTester && (
+              <button
+                type="button"
+                id="btn-header-vmware-iso-tester"
+                onClick={onOpenVmwareIsoTester}
+                className="px-2.5 py-1.5 rounded-lg text-xs font-medium bg-cyan-50 text-cyan-800 border border-cyan-200 hover:bg-cyan-100 transition-colors flex items-center gap-1.5"
+                title="VMware Virtual Machine Firmware ISO Package Tester"
+              >
+                <Disc className="w-3.5 h-3.5 text-cyan-600 animate-spin-slow" />
+                <span>VMware VM Mount</span>
               </button>
             )}
 

@@ -12,6 +12,7 @@ import { DeviceModal } from './components/DeviceModal';
 import { DeleteConfirmModal } from './components/DeleteConfirmModal';
 import { DockerDbModal } from './components/DockerDbModal';
 import { FlushConfirmModal } from './components/FlushConfirmModal';
+import { VmwareIsoTesterModal } from './components/VmwareIsoTesterModal';
 
 import { 
   Server, 
@@ -91,6 +92,15 @@ export default function App() {
   const [editingServer, setEditingServer] = useState<Server | null>(null);
   const [deletingServer, setDeletingServer] = useState<Server | null>(null);
   const [isFlushConfirmOpen, setIsFlushConfirmOpen] = useState(false);
+
+  // VMware ISO Tester Modal State
+  const [isVmwareIsoTesterOpen, setIsVmwareIsoTesterOpen] = useState(false);
+  const [vmwareTesterInitialPackage, setVmwareTesterInitialPackage] = useState<FirmwarePackage | null>(null);
+
+  const handleOpenVmwareIsoTester = (pkg?: FirmwarePackage) => {
+    setVmwareTesterInitialPackage(pkg || null);
+    setIsVmwareIsoTesterOpen(true);
+  };
 
   // Wizard pre-fills
   const [wizardPreSelectedServers, setWizardPreSelectedServers] = useState<string[]>([]);
@@ -628,6 +638,7 @@ export default function App() {
         criticalCount={criticalCount}
         dbStatus={dbStatus}
         onOpenDockerDb={() => setIsDockerDbModalOpen(true)}
+        onOpenVmwareIsoTester={() => handleOpenVmwareIsoTester()}
       />
 
       {/* Toast Banner */}
@@ -730,6 +741,7 @@ export default function App() {
             onDeletePackage={handleDeletePackage}
             onDeployPackage={handleDeployPackage}
             onQuickUpgradeServer={handleQuickUpgrade}
+            onOpenVmwareIsoTester={handleOpenVmwareIsoTester}
           />
         )}
 
@@ -868,6 +880,18 @@ export default function App() {
         onClose={() => setIsFlushConfirmOpen(false)}
         onConfirmFlush={handleFlushAll}
         isDbConnected={dbStatus?.connected}
+      />
+
+      {/* VMware Virtual Machine Firmware ISO Package Tester Modal */}
+      <VmwareIsoTesterModal
+        isOpen={isVmwareIsoTesterOpen}
+        onClose={() => {
+          setIsVmwareIsoTesterOpen(false);
+          setVmwareTesterInitialPackage(null);
+        }}
+        packages={packages}
+        initialPackage={vmwareTesterInitialPackage}
+        onShowToast={showToast}
       />
     </div>
   );

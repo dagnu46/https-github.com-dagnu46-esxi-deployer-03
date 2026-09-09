@@ -1,6 +1,41 @@
 import { Server, FirmwarePackage, AuditRecord, BaselineConfig } from '../types';
 
 export const INITIAL_FIRMWARE_PACKAGES: FirmwarePackage[] = [
+  // --- ISO FIRMWARE PACKAGES (FOR VMWARE VM MOUNTING & TESTING) ---
+  {
+    id: 'fw-iso-hpe-spp-2026.08',
+    name: 'HPE Service Pack for ProLiant (SPP) ISO Package',
+    component: 'BIOS',
+    version: '2026.08.0',
+    releaseDate: '2026-08-25',
+    severity: 'critical',
+    supportedModels: ['HPE ProLiant DL380 Gen10', 'HPE ProLiant DL360 Gen10', 'HPE ProLiant DL380 Gen11'],
+    fileSizeMb: 4850.0,
+    sha256: 'a1b2c3d4e5f67890123456789abcdef0123456789abcdef0123456789abcdef0',
+    cves: ['CVE-2026-21340', 'CVE-2026-22419'],
+    releaseNotes: 'Bootable ISO firmware suite for HPE ProLiant Gen10/Gen11 servers. Includes System ROM, iLO5/6, Smart Array, and NIC updates. Suitable for VMware VM virtual CD-ROM mounting tests.',
+    rebootRequired: true,
+    vendor: 'Hewlett Packard Enterprise',
+    fileName: 'P89201_SPP_2026.08.0.iso',
+    packageFormat: 'ISO',
+  },
+  {
+    id: 'fw-iso-dell-suu-26.08',
+    name: 'Dell Server Update Utility (SUU) Bootable ISO',
+    component: 'BIOS',
+    version: '26.08.00',
+    releaseDate: '2026-08-20',
+    severity: 'security',
+    supportedModels: ['Dell PowerEdge R750', 'Dell PowerEdge R650', 'Dell PowerEdge R740xd'],
+    fileSizeMb: 3620.5,
+    sha256: 'f0e9d8c7b6a55432109876543210fedcba9876543210fedcba9876543210fedc',
+    cves: ['CVE-2026-19401', 'CVE-2026-17482'],
+    releaseNotes: 'Comprehensive ISO image containing BIOS, iDRAC9, PERC RAID, and Broadcom NIC firmware images for Dell PowerEdge 15G/16G servers.',
+    rebootRequired: true,
+    vendor: 'Dell Technologies',
+    fileName: 'SUU_26.08.00_x64.iso',
+    packageFormat: 'ISO',
+  },
   // --- DELL TECHNOLOGIES ---
   {
     id: 'fw-bios-dell-2.20.0',
@@ -26,6 +61,7 @@ export const INITIAL_FIRMWARE_PACKAGES: FirmwarePackage[] = [
     rebootRequired: true,
     vendor: 'Dell Technologies',
     fileName: 'BIOS_R750_2.20.0.exe',
+    packageFormat: 'EXE',
   },
   {
     id: 'fw-bmc-idrac-7.00.00',

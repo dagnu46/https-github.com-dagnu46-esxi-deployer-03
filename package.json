@@ -35,5 +35,8 @@
     "esbuild": "^0.28.2",
     "tsx": "^4.23.13",
     "typescript": "~5.8.2"
+  },
+  "optionalDependencies": {
+    "@rollup/rollup-darwin-x64": "^4.63.1"
   }
 }
