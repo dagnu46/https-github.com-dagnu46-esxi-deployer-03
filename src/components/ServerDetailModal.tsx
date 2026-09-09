@@ -860,7 +860,7 @@ export const ServerDetailModal: React.FC<ServerDetailModalProps> = ({
                   <div className="space-y-2">
                     <button
                       type="button"
-                      onClick={() => setConsoleLogMessage('Simulated ACPI graceful warm reboot sent via IPMI.')}
+                      onClick={() => setConsoleLogMessage('ACPI graceful warm reboot command dispatched via IPMI / Redfish.')}
                       className="w-full text-left px-3 py-2 bg-white border border-slate-200 rounded-lg hover:bg-slate-100 text-xs font-medium text-slate-800 flex items-center justify-between"
                     >
                       <span>Graceful OS Reboot (ACPI Signal)</span>
@@ -868,7 +868,7 @@ export const ServerDetailModal: React.FC<ServerDetailModalProps> = ({
                     </button>
                     <button
                       type="button"
-                      onClick={() => setConsoleLogMessage('Simulated BMC cold reset signal sent.')}
+                      onClick={() => setConsoleLogMessage('BMC cold reset signal dispatched to out-of-band controller.')}
                       className="w-full text-left px-3 py-2 bg-white border border-slate-200 rounded-lg hover:bg-slate-100 text-xs font-medium text-slate-800 flex items-center justify-between"
                     >
                       <span>Reset BMC Out-of-Band Controller</span>

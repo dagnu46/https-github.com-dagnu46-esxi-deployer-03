@@ -267,7 +267,6 @@ export async function syncSaveCampaign(campaign: UpgradeCampaign | null): Promis
 export async function testVcenterConnection(config: VmwareVcenterConfig): Promise<{
   success: boolean;
   authenticated: boolean;
-  isSimulation?: boolean;
   vcenterHost?: string;
   datacenter?: string;
   latencyMs?: number;
@@ -356,7 +355,6 @@ export async function verifyLiveVmwareCdrom(params: {
       testedAt: new Date().toISOString(),
       vmId: params.vmId,
       vmName: params.vmName || 'Target VM',
-      isSimulation: !!params.vcenter?.simulationMode,
       vcenterReachable: false,
       vmExistsInVcenter: false,
       matchesCurrentAppMount: false,
@@ -373,7 +371,6 @@ export async function fetchVmwareDatastores(params: {
   vmName?: string;
 }): Promise<{
   success: boolean;
-  isSimulation?: boolean;
   datastores: VmwareDatastoreInfo[];
   total?: number;
   retrievedAt?: string;

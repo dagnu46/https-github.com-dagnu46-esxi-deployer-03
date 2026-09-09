@@ -938,14 +938,14 @@ export const FirmwareDependencyVisualizer: React.FC<FirmwareDependencyVisualizer
                 className="w-full py-2.5 px-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-semibold flex items-center justify-center gap-2 transition-colors shadow-xs"
               >
                 <Zap className="w-4 h-4" />
-                <span>Test Compatibility on Inventory Servers</span>
+                <span>Evaluate Compatibility on Fleet Inventory</span>
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* VIEW 2: INCOMPATIBILITY SIMULATOR & PRE-UPGRADE ADVISOR */}
+      {/* VIEW 2: INCOMPATIBILITY VALIDATOR & PRE-UPGRADE ADVISOR */}
       {activeTab === 'simulator' && (
         <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs space-y-6">
           <div className="border-b border-slate-200 pb-4">
@@ -954,7 +954,7 @@ export const FirmwareDependencyVisualizer: React.FC<FirmwareDependencyVisualizer
               <span>Pre-Upgrade Incompatibility Validator & Safety Advisor</span>
             </h3>
             <p className="text-xs text-slate-500 mt-1">
-              Select any server in your fleet and a candidate firmware package to simulate compatibility before scheduling an update.
+              Select any server in your fleet and a candidate firmware package to verify prerequisite compatibility before executing an update.
             </p>
           </div>
 

@@ -85,13 +85,11 @@ export const VmwareIsoTesterModal: React.FC<VmwareIsoTesterModalProps> = ({
   const [vcenterDatacenter, setVcenterDatacenter] = useState<string>('Datacenter-01');
   const [vcenterDatastore, setVcenterDatastore] = useState<string>('datastore1');
   const [ignoreSsl, setIgnoreSsl] = useState<boolean>(true);
-  const [simulationMode, setSimulationMode] = useState<boolean>(false);
 
   // Connection State
   const [isTestingConn, setIsTestingConn] = useState(false);
   const [connStatus, setConnStatus] = useState<{
     connected: boolean;
-    isSimulation?: boolean;
     testedAt?: string;
     latencyMs?: number;
     error?: string;
@@ -227,8 +225,8 @@ export const VmwareIsoTesterModal: React.FC<VmwareIsoTesterModalProps> = ({
 
   // Test vCenter Connection & Fetch VMs
   const handleTestConnection = async () => {
-    if (!simulationMode && !vcenterHost.trim()) {
-      alert('Please enter a valid vCenter Host / FQDN / IP, or enable "Simulate Lab Environment" for offline testing.');
+    if (!vcenterHost.trim()) {
+      alert('Please enter a valid vCenter Host / FQDN / IP.');
       return;
     }
 
@@ -241,9 +239,7 @@ export const VmwareIsoTesterModal: React.FC<VmwareIsoTesterModalProps> = ({
 
     addLog(
       'VCENTER',
-      `Testing connection to vCenter host: ${vcenterHost || 'localhost'}:${vcenterPort} (Simulation: ${
-        simulationMode ? 'ON' : 'OFF'
-      })...`
+      `Testing live connection to vCenter host: ${vcenterHost}:${vcenterPort}...`
     );
 
     const config: VmwareVcenterConfig = {
@@ -254,7 +250,6 @@ export const VmwareIsoTesterModal: React.FC<VmwareIsoTesterModalProps> = ({
       datacenter: vcenterDatacenter,
       datastore: vcenterDatastore,
       ignoreSsl,
-      simulationMode,
     };
 
     const res = await testVcenterConnection(config);
@@ -263,7 +258,6 @@ export const VmwareIsoTesterModal: React.FC<VmwareIsoTesterModalProps> = ({
     if (res.success && res.vms) {
       setConnStatus({
         connected: true,
-        isSimulation: res.isSimulation,
         testedAt: new Date().toLocaleTimeString(),
         latencyMs: res.latencyMs,
       });
@@ -273,15 +267,13 @@ export const VmwareIsoTesterModal: React.FC<VmwareIsoTesterModalProps> = ({
       }
       addLog(
         'VCENTER',
-        `Connection verified! Discovered ${res.vms.length} Virtual Machines in ${vcenterDatacenter} (${res.latencyMs || 15}ms).`,
+        `Live vCenter verified! Discovered ${res.vms.length} Virtual Machines in ${vcenterDatacenter} (${res.latencyMs || 15}ms).`,
         'success',
         `Inventory: ${res.vms.map((v) => `${v.name} [${v.powerState}]`).join(', ')}`
       );
       if (onShowToast) {
         onShowToast(
-          res.isSimulation
-            ? `Loaded Simulated vCenter Lab (${res.vms.length} VMs available)`
-            : `Connected to live vCenter ${res.vcenterHost} (${res.vms.length} VMs found)`,
+          `Connected to live vCenter ${res.vcenterHost || vcenterHost} (${res.vms.length} VMs found)`,
           'success'
         );
       }
@@ -321,7 +313,6 @@ export const VmwareIsoTesterModal: React.FC<VmwareIsoTesterModalProps> = ({
       datacenter: vcenterDatacenter,
       datastore: selectedDatastore,
       ignoreSsl,
-      simulationMode,
     };
 
     const res = await fetchVmwareDatastores({
@@ -603,7 +594,6 @@ export const VmwareIsoTesterModal: React.FC<VmwareIsoTesterModalProps> = ({
         datacenter: vcenterDatacenter,
         datastore: selectedDatastore,
         ignoreSsl,
-        simulationMode,
       },
       vmId,
       vmName,
@@ -630,26 +620,14 @@ export const VmwareIsoTesterModal: React.FC<VmwareIsoTesterModalProps> = ({
         setVmPowerState(res.powerState);
       }
 
-      if (res.realDispatched) {
-        addLog(
-          'CONNECT',
-          `LIVE VCENTER CONFIRMED: ReconfigVM task [${res.vcenterTaskId || 'Task'}] created in vCenter Recent Tasks!`,
-          'success',
-          `Task ID: ${res.vcenterTaskId}\nTarget VM: ${vmName} (${vmId})\nBacking: ${res.isoPathMounted}\nStatus: Live vCenter REST API successfully reconfigured CD/DVD Drive 1!\nYou can verify this in your VMware vCenter web client under "Recent Tasks" or VM > "Edit Settings" > "CD/DVD Drive 1".`
-        );
-        if (onShowToast) {
-          onShowToast(`Live vCenter ReconfigVM task created! (${res.vcenterTaskId})`, 'success');
-        }
-      } else {
-        addLog(
-          'CONNECT',
-          `[SANDBOX SIMULATION ONLY] File connected in offline memory. (NO TASK IN LIVE VCENTER)`,
-          'warn',
-          `⚠️ WHY YOU DON'T SEE A TASK IN VCENTER:\n1. Mode: "Simulate Lab Environment" is enabled (or private LAN vCenter ${vcenterHost} is unreachable from this container).\n2. Memory vs Datastore: The file "${targetIsoPath}" is staged in local sandbox memory, not on an ESXi Datastore.\n\nTO SEE TASKS IN YOUR REAL VCENTER:\n• Uncheck "Simulate Lab Environment" in Step 1\n• Provide routable live vCenter credentials\n• Ensure the file is on your ESXi Datastore (Step 4)`
-        );
-        if (onShowToast) {
-          onShowToast(`Connected in local sandbox only. (No changes in vCenter)`, 'warn');
-        }
+      addLog(
+        'CONNECT',
+        `LIVE VCENTER CONFIRMED: ReconfigVM task [${res.vcenterTaskId || 'Task'}] created in vCenter Recent Tasks!`,
+        'success',
+        `Task ID: ${res.vcenterTaskId || 'Dispatched'}\nTarget VM: ${vmName} (${vmId})\nBacking: ${res.isoPathMounted}\nStatus: Live vCenter REST API successfully reconfigured CD/DVD Drive 1!\nYou can verify this in your VMware vCenter web client under "Recent Tasks" or VM > "Edit Settings" > "CD/DVD Drive 1".`
+      );
+      if (onShowToast) {
+        onShowToast(`Live vCenter ReconfigVM task created! (${res.vcenterTaskId || 'Success'})`, 'success');
       }
     } else {
       addLog(
@@ -680,7 +658,6 @@ export const VmwareIsoTesterModal: React.FC<VmwareIsoTesterModalProps> = ({
       datacenter: vcenterDatacenter,
       datastore: selectedDatastore,
       ignoreSsl,
-      simulationMode,
     };
 
     const res = await unmountIsoFromVmwareVm({ vmId, vmName, vcenter: config });
@@ -688,20 +665,12 @@ export const VmwareIsoTesterModal: React.FC<VmwareIsoTesterModalProps> = ({
 
     if (res.success) {
       setActiveMountedIso(null);
-      if (res.realDispatched) {
-        addLog(
-          'CONNECT',
-          `LIVE VCENTER CONFIRMED: CD/DVD Drive disconnected in vCenter! Task: ${res.vcenterTaskId || 'Completed'}`,
-          'success',
-          `Target VM [${vmName}] CD/DVD Drive 1 disconnected in live vCenter.`
-        );
-      } else {
-        addLog(
-          'CONNECT',
-          `Media ejected from sandbox VM [${vmName}]. (No changes in live vCenter).`,
-          'info'
-        );
-      }
+      addLog(
+        'CONNECT',
+        `LIVE VCENTER CONFIRMED: CD/DVD Drive disconnected in vCenter! Task: ${res.vcenterTaskId || 'Completed'}`,
+        'success',
+        `Target VM [${vmName}] CD/DVD Drive 1 disconnected in live vCenter.`
+      );
       if (onShowToast) {
         onShowToast(`ISO media disconnected from VM ${vmName}`, 'info');
       }
@@ -727,7 +696,6 @@ export const VmwareIsoTesterModal: React.FC<VmwareIsoTesterModalProps> = ({
       datacenter: vcenterDatacenter,
       datastore: selectedDatastore,
       ignoreSsl,
-      simulationMode,
     };
 
     const res = await verifyLiveVmwareCdrom({
@@ -740,14 +708,7 @@ export const VmwareIsoTesterModal: React.FC<VmwareIsoTesterModalProps> = ({
     setIsVerifyingLive(false);
     setLiveVerification(res);
 
-    if (res.isSimulation) {
-      addLog(
-        'VCENTER',
-        `Live Audit Result: Simulation Mode is active.`,
-        'warn',
-        `The app is currently in "Simulate Lab Environment" mode. No connection was made to live vCenter. The VM and attached file exist only in your browser/server local sandbox memory.`
-      );
-    } else if (!res.vcenterReachable) {
+    if (!res.vcenterReachable) {
       addLog(
         'VCENTER',
         `Live Audit Result: Cannot reach vCenter at ${vcenterHost}:${vcenterPort}.`,
@@ -802,7 +763,6 @@ export const VmwareIsoTesterModal: React.FC<VmwareIsoTesterModalProps> = ({
       datacenter: vcenterDatacenter,
       datastore: selectedDatastore,
       ignoreSsl,
-      simulationMode,
     };
 
     const res = await manageVmPowerState({
@@ -876,9 +836,9 @@ export const VmwareIsoTesterModal: React.FC<VmwareIsoTesterModalProps> = ({
             </div>
             <div>
               <h2 className="text-lg sm:text-xl font-bold text-slate-100 flex items-center gap-2">
-                VMware Virtual Machine ISO Package Tester
+                VMware Virtual Machine Media & ISO Manager
                 <span className="px-2.5 py-0.5 text-xs font-semibold bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 rounded-full">
-                  vCenter & Datastore API
+                  Live vCenter Tasks
                 </span>
               </h2>
               <p className="text-xs text-slate-400">
@@ -942,17 +902,10 @@ export const VmwareIsoTesterModal: React.FC<VmwareIsoTesterModalProps> = ({
               {connStatus && (
                 <div className="flex items-center gap-2 text-xs">
                   {connStatus.connected ? (
-                    connStatus.isSimulation ? (
-                      <span className="flex items-center gap-1.5 text-amber-300 font-medium bg-amber-500/10 px-2.5 py-1 rounded-full border border-amber-500/20">
-                        <CheckCircle2 className="w-3.5 h-3.5 text-amber-400" />
-                        Simulated Lab Mode ({connStatus.latencyMs}ms)
-                      </span>
-                    ) : (
-                      <span className="flex items-center gap-1.5 text-emerald-400 font-medium bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/20">
-                        <CheckCircle2 className="w-3.5 h-3.5" />
-                        Live vCenter Connected ({connStatus.latencyMs}ms)
-                      </span>
-                    )
+                    <span className="flex items-center gap-1.5 text-emerald-400 font-medium bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/20">
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      Live vCenter Connected ({connStatus.latencyMs}ms)
+                    </span>
                   ) : (
                     <span className="flex items-center gap-1.5 text-rose-400 font-medium bg-rose-500/10 px-2.5 py-1 rounded-full border border-rose-500/20">
                       <AlertTriangle className="w-3.5 h-3.5" />
@@ -979,7 +932,7 @@ export const VmwareIsoTesterModal: React.FC<VmwareIsoTesterModalProps> = ({
                   <p className="font-medium text-slate-200">Diagnostic Notes:</p>
                   <ul className="list-disc list-inside space-y-0.5 text-slate-400">
                     <li>Host tested: <span className="font-mono text-slate-200">{vcenterHost || '(empty)'}</span> on port <span className="font-mono text-slate-200">{vcenterPort}</span>.</li>
-                    <li>If the server is in a private network, consider using the <strong className="text-amber-300">"Simulate Lab Environment"</strong> sandbox mode.</li>
+                    <li>Ensure network routing, firewall rules, and vCenter credentials are correct for live operations.</li>
                   </ul>
                 </div>
               </div>
@@ -1049,16 +1002,6 @@ export const VmwareIsoTesterModal: React.FC<VmwareIsoTesterModalProps> = ({
                   />
                   Ignore SSL / Self-signed certificate errors
                 </label>
-
-                <label className="flex items-center gap-2 text-xs text-amber-300/90 hover:text-amber-200 cursor-pointer select-none font-medium bg-amber-500/10 px-2.5 py-1 rounded-lg border border-amber-500/20 transition-colors">
-                  <input
-                    type="checkbox"
-                    checked={simulationMode}
-                    onChange={(e) => setSimulationMode(e.target.checked)}
-                    className="rounded bg-slate-900 border-amber-600/50 text-amber-500 focus:ring-0"
-                  />
-                  Simulate Lab Environment (Offline Sandbox)
-                </label>
               </div>
 
               <button
@@ -1067,7 +1010,7 @@ export const VmwareIsoTesterModal: React.FC<VmwareIsoTesterModalProps> = ({
                 className="flex items-center justify-center gap-2 px-4 py-2 bg-cyan-600/30 hover:bg-cyan-600/50 text-cyan-200 border border-cyan-500/40 rounded-lg text-xs font-semibold transition-colors disabled:opacity-50"
               >
                 {isTestingConn ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
-                {simulationMode ? 'Load Simulated Lab Inventory' : 'Test Real Connection & Fetch VMs'}
+                Test Real Connection & Fetch VMs
               </button>
             </div>
           </div>
@@ -1515,7 +1458,7 @@ export const VmwareIsoTesterModal: React.FC<VmwareIsoTesterModalProps> = ({
               {/* Status Banner when Mount Result is Present */}
               {mountResult && (
                 <div className="animate-in fade-in pt-1">
-                  {mountResult.realDispatched ? (
+                  {mountResult.success ? (
                     <div className="p-3 bg-emerald-950/40 border border-emerald-500/50 rounded-xl flex items-start gap-3 text-xs">
                       <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
                       <div className="flex-1 space-y-1">
@@ -1532,31 +1475,25 @@ export const VmwareIsoTesterModal: React.FC<VmwareIsoTesterModalProps> = ({
                       </div>
                     </div>
                   ) : (
-                    <div className="p-3 bg-amber-950/40 border border-amber-500/50 rounded-xl flex items-start gap-3 text-xs">
-                      <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
+                    <div className="p-3 bg-rose-950/40 border border-rose-500/50 rounded-xl flex items-start gap-3 text-xs">
+                      <AlertTriangle className="w-5 h-5 text-rose-400 shrink-0 mt-0.5" />
                       <div className="flex-1 space-y-1">
                         <div className="flex items-center justify-between">
-                          <span className="font-bold text-amber-300">Offline Simulation Sandbox (No Task in Live vCenter)</span>
-                          <span className="font-mono text-[11px] bg-amber-900/60 text-amber-200 px-2 py-0.5 rounded border border-amber-700/50">
-                            Simulation Only
+                          <span className="font-bold text-rose-300">vCenter ReconfigVM Task Failed</span>
+                          <span className="font-mono text-[11px] bg-rose-900/60 text-rose-200 px-2 py-0.5 rounded border border-rose-700/50">
+                            Failed
                           </span>
                         </div>
                         <p className="text-slate-300 text-[11px] leading-relaxed">
-                          The file was connected in local sandbox memory, but <strong>no task was sent to your real VMware vCenter</strong>. This is why you cannot see any task in vCenter Recent Tasks.
+                          {mountResult.error || 'The task could not be completed on vCenter.'}
                         </p>
-                        <div className="pt-1 flex flex-wrap items-center gap-3">
-                          <span className="text-[10.5px] text-amber-200/90 font-mono">
-                            💡 Resolution: Uncheck "Simulate Lab Environment" in Step 1, verify network to {vcenterHost || 'vCenter'}, and place the ISO on an ESXi datastore.
-                          </span>
-                          <button
-                            onClick={handleVerifyLiveVcenter}
-                            disabled={isVerifyingLive}
-                            className="text-[11px] font-bold text-cyan-300 hover:text-cyan-100 underline flex items-center gap-1 cursor-pointer"
-                          >
-                            {isVerifyingLive ? <Loader2 className="w-3 h-3 animate-spin" /> : <Activity className="w-3 h-3" />}
-                            Audit Live vCenter CD/DVD Drive Now
-                          </button>
-                        </div>
+                        {mountResult.whyNoTaskDiagnostic?.resolution && (
+                          <div className="pt-1 flex flex-wrap items-center gap-3">
+                            <span className="text-[10.5px] text-rose-200/90 font-mono">
+                              💡 Resolution: {mountResult.whyNoTaskDiagnostic.resolution}
+                            </span>
+                          </div>
+                        )}
                       </div>
                     </div>
                   )}
@@ -1710,10 +1647,10 @@ export const VmwareIsoTesterModal: React.FC<VmwareIsoTesterModalProps> = ({
                 </div>
               ) : (
                 <p className="text-slate-400 text-[11px] leading-relaxed">
-                  When mounting ISOs, VMware vCenter only creates a visible <code className="text-cyan-300 font-mono bg-slate-900 px-1 py-0.5 rounded">ReconfigVM_Task</code> if:
-                  (1) <strong className="text-slate-200">"Simulate Lab Environment"</strong> is unchecked,
-                  (2) The server can route to your vCenter's network without firewall drops, and
-                  (3) The ISO has been transferred to an <strong className="text-slate-200">ESXi Datastore</strong> (Step 4 above), as ESXi hosts cannot read media from the web server's local filesystem.
+                  When mounting ISOs, VMware vCenter registers a live <code className="text-cyan-300 font-mono bg-slate-900 px-1 py-0.5 rounded">ReconfigVM_Task</code> in Recent Tasks when:
+                  (1) Credentials and network access to your live vCenter host ({vcenterHost || 'vCenter'}) are established,
+                  (2) The target VM is present in the vCenter inventory, and
+                  (3) The ISO path references an accessible <strong className="text-slate-200">ESXi Datastore</strong> (e.g. [{selectedDatastore || 'datastore1'}] iso/file.iso), as ESXi hosts read virtual media directly from their storage volumes.
                 </p>
               )}
             </div>

@@ -488,7 +488,7 @@ export const FirmwareCatalog: React.FC<FirmwareCatalogProps> = ({
               className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-cyan-600 hover:bg-cyan-700 text-white rounded-lg text-xs font-semibold shadow-xs transition-colors"
             >
               <Disc className="w-4 h-4" />
-              <span>VMware VM Mount Tester</span>
+              <span>VMware VM Media Manager</span>
             </button>
           )}
 
@@ -1524,13 +1524,13 @@ export const FirmwareCatalog: React.FC<FirmwareCatalogProps> = ({
               <div className="p-4 bg-slate-800/60 border border-slate-700 rounded-xl space-y-2">
                 <div className="flex items-center gap-2 text-cyan-400 font-bold text-sm">
                   <span className="w-5 h-5 rounded-full bg-cyan-500/20 flex items-center justify-center text-xs">1</span>
-                  <span>Simulation Sandbox Mode is Active</span>
+                  <span>Target VM Inventory Discrepancy</span>
                 </div>
                 <p className="text-slate-300 leading-relaxed pl-7">
-                  If the <strong>"Simulate Lab Environment"</strong> checkbox is checked in the VMware ISO Tester, the application executes simulated latency runs locally in memory so you can test without live hardware. Because no network packets leave the server, no task is generated in vCenter.
+                  The ReconfigVM operation requires a real virtual machine managed by the target vCenter inventory. If the VM identifier or name does not exist on that vCenter host, the REST API call fails before creating a queued task in the vCenter Recent Tasks view.
                 </p>
                 <div className="pl-7 text-[11px] text-cyan-300/80 font-mono">
-                  Solution: Uncheck "Simulate Lab Environment" and provide live vCenter credentials.
+                  Solution: Connect to vCenter first, select an existing VM from the discovered inventory, and verify its hardware status.
                 </div>
               </div>
 

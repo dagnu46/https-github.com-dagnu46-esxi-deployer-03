@@ -280,7 +280,6 @@ export interface VmwareVcenterConfig {
   datacenter?: string;
   datastore?: string;
   ignoreSsl: boolean;
-  simulationMode?: boolean;
   sessionToken?: string;
 }
 
@@ -344,7 +343,6 @@ export interface VmwarePowerStateResult {
   memoryMb?: number;
   guestOs?: string;
   ipAddress?: string;
-  isSimulation?: boolean;
   lastChecked: string;
   message?: string;
   error?: string;
@@ -381,13 +379,11 @@ export interface VmwareMountStep {
 
 export interface VmwareIsoMountResult {
   success: boolean;
-  isSimulation?: boolean;
   realDispatched?: boolean;
   liveVcenterUpdated?: boolean;
   vcenterTaskId?: string;
   vcenterTaskNotice?: string;
   whyNoTaskDiagnostic?: {
-    simulationModeActive: boolean;
     networkBoundary: string;
     datastoreRequirement: string;
     taskGenerationRule: string;
@@ -412,7 +408,6 @@ export interface VmwareLiveVerificationResult {
   testedAt: string;
   vmId: string;
   vmName: string;
-  isSimulation: boolean;
   vcenterReachable: boolean;
   vmExistsInVcenter: boolean;
   cdromBackingType?: string;
