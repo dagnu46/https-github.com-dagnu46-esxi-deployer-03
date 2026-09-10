@@ -15,6 +15,8 @@ import { FlushConfirmModal } from './components/FlushConfirmModal';
 import { VmwareIsoTesterModal } from './components/VmwareIsoTesterModal';
 import { ExportReportModal, ExportDataset } from './components/ExportReportModal';
 import { EditCampaignModal } from './components/EditCampaignModal';
+import { MainPageFirmwareUploadPanel } from './components/MainPageFirmwareUploadPanel';
+import { BaremetalEsxiDeployView } from './components/BaremetalEsxiDeployView';
 import { exportFleetToCsv, exportFleetToJson } from './utils/exportUtils';
 
 import { 
@@ -67,6 +69,7 @@ import {
 } from './services/api';
 
 import { createCampaign } from './utils/orchestrator';
+import { testServerAccess } from './utils/accessTester';
 import { Plus, CheckCircle2, AlertTriangle, ShieldCheck, Download, FileSpreadsheet, FileCode } from 'lucide-react';
 
 export default function App() {
@@ -696,6 +699,44 @@ export default function App() {
     showToast(`Device "${target?.hostname || serverId}" decommissioned and deleted from database.`, 'warn');
   };
 
+  // Live real network, BMC, and Redfish connectivity check for a server
+  const handleTestServerAccess = async (server: Server) => {
+    try {
+      const creds = server.credentials || {
+        bmcUsername: 'root',
+        bmcPassword: '',
+        bmcProtocol: server.bmcAffectedType === 'Supermicro IPMI' ? 'ipmi' : 'redfish',
+        bmcPort: server.bmcAffectedType === 'Supermicro IPMI' ? 623 : 443,
+        ignoreSslErrors: true,
+        enableSsh: false
+      };
+      const result = await testServerAccess({
+        hostname: server.hostname,
+        ip: server.ip,
+        bmcIp: server.bmcIp,
+        bmcAffectedType: server.bmcAffectedType,
+        model: server.model,
+        credentials: creds,
+      });
+      const updated: Server = {
+        ...server,
+        accessStatus: result,
+      };
+      syncSaveServer(updated);
+      setServers(prev => prev.map(s => s.id === server.id ? updated : s));
+      if (inspectedServer && inspectedServer.id === server.id) {
+        setInspectedServer(updated);
+      }
+      if (result.status === 'success') {
+        showToast(`Verified live connectivity to ${server.hostname} (${result.latencyMs || 0}ms RTT).`, 'success');
+      } else {
+        showToast(`Verification check failed on ${server.hostname}: ${result.summary}`, 'warn');
+      }
+    } catch (err: any) {
+      showToast(`Error checking ${server.hostname}: ${err.message}`, 'warn');
+    }
+  };
+
   // Update firmware package
   const handleUpdatePackage = (updatedPkg: FirmwarePackage) => {
     syncSavePackage(updatedPkg);
@@ -792,7 +833,6 @@ export default function App() {
           setWizardPreSelectedComponent('BIOS');
           setIsWizardOpen(true);
         }}
-        onResetDemo={handleResetDemo}
         onOpenFlushConfirm={() => setIsFlushConfirmOpen(true)}
         totalServers={servers.length}
         criticalCount={criticalCount}
@@ -929,7 +969,20 @@ export default function App() {
                 setEditingServer(null);
                 setIsDeviceModalOpen(true);
               }}
-              onResetDemo={handleResetDemo}
+              onTestServerAccess={handleTestServerAccess}
+            />
+
+            {/* Upload or Define Firmware Version: Output Window for processing file upload & Firmware List */}
+            <MainPageFirmwareUploadPanel
+              packages={packages}
+              servers={servers}
+              onAddPackage={newPkg => {
+                setPackages(prev => [newPkg, ...prev]);
+                showToast(`Firmware package "${newPkg.name}" registered & stored!`, 'success');
+              }}
+              onDeletePackage={handleDeletePackage}
+              onDeployPackage={handleDeployPackage}
+              onShowToast={showToast}
             />
           </div>
         )}
@@ -947,6 +1000,18 @@ export default function App() {
             onDeployPackage={handleDeployPackage}
             onQuickUpgradeServer={handleQuickUpgrade}
             onOpenVmwareIsoTester={handleOpenVmwareIsoTester}
+            onShowToast={showToast}
+          />
+        )}
+
+        {activeTab === 'baremetal' && (
+          <BaremetalEsxiDeployView
+            servers={servers}
+            packages={packages}
+            onShowToast={showToast}
+            onRegisterServer={newServer => {
+              setServers(prev => [newServer, ...prev]);
+            }}
           />
         )}
 
@@ -1008,7 +1073,7 @@ export default function App() {
               <span>{dbStatus?.connected ? `PostgreSQL Database Active (${dbStatus.latencyMs ?? 0}ms)` : 'Docker & Local PostgreSQL'}</span>
             </button>
             <span>•</span>
-            <span>Redfish Telemetry Ingress Active • IPMI 2.0 / DMTF Compliant</span>
+            <span>Enterprise Telemetry Ingress Active • IPMI 2.0 / DMTF Compliant</span>
           </div>
           <div className="font-mono text-[11px] text-slate-400">
             Cluster Fleet Engine v2.4 • Datacenter Health Nominal

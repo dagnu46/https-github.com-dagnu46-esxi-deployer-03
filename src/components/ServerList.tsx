@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { 
   Server as ServerIcon, 
   ExternalLink, 
@@ -15,7 +15,8 @@ import {
   Trash2,
   MapPin,
   Globe,
-  RotateCcw
+  RotateCcw,
+  RefreshCw
 } from 'lucide-react';
 import { Server, ComponentType, ComponentFirmware } from '../types';
 
@@ -30,6 +31,7 @@ interface ServerListProps {
   onDeleteServer?: (server: Server) => void;
   onEnrollNewServer?: () => void;
   onResetDemo?: () => void;
+  onTestServerAccess?: (server: Server) => Promise<void>;
 }
 
 export const ServerList: React.FC<ServerListProps> = ({
@@ -43,7 +45,20 @@ export const ServerList: React.FC<ServerListProps> = ({
   onDeleteServer,
   onEnrollNewServer,
   onResetDemo,
+  onTestServerAccess,
 }) => {
+  const [probingId, setProbingId] = useState<string | null>(null);
+
+  const handleProbe = async (server: Server) => {
+    if (!onTestServerAccess) return;
+    setProbingId(server.id);
+    try {
+      await onTestServerAccess(server);
+    } finally {
+      setProbingId(null);
+    }
+  };
+
   const allVisibleSelected = servers.length > 0 && servers.every(s => selectedServerIds.includes(s.id));
   const someVisibleSelected = servers.some(s => selectedServerIds.includes(s.id)) && !allVisibleSelected;
 
@@ -171,9 +186,9 @@ export const ServerList: React.FC<ServerListProps> = ({
                     <div className="w-12 h-12 rounded-xl bg-slate-100 flex items-center justify-center text-slate-400 mx-auto">
                       <ServerIcon className="w-6 h-6" />
                     </div>
-                    <h4 className="text-sm font-bold text-slate-800">All Server Inventory Entries Are Flushed</h4>
+                    <h4 className="text-sm font-bold text-slate-800">Fleet Inventory Is Empty</h4>
                     <p className="text-xs text-slate-500">
-                      There are currently no server nodes in the inventory. You can enroll new server nodes manually or restore the datacenter sample fleet.
+                      There are currently no server nodes enrolled. Register baremetal hardware nodes to monitor firmware health and execute real upgrades.
                     </p>
                     <div className="flex items-center justify-center gap-3 pt-2">
                       {onEnrollNewServer && (
@@ -184,17 +199,6 @@ export const ServerList: React.FC<ServerListProps> = ({
                           className="px-3.5 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-xs flex items-center gap-1.5"
                         >
                           <span>+ Enroll Server Node</span>
-                        </button>
-                      )}
-                      {onResetDemo && (
-                        <button
-                          type="button"
-                          id="btn-empty-reseed-demo"
-                          onClick={onResetDemo}
-                          className="px-3.5 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold flex items-center gap-1.5 border border-slate-200"
-                        >
-                          <RotateCcw className="w-3.5 h-3.5" />
-                          <span>Re-seed Demo Fleet</span>
                         </button>
                       )}
                     </div>
@@ -347,6 +351,23 @@ export const ServerList: React.FC<ServerListProps> = ({
                           <span className="w-1.5 h-1.5 rounded-full bg-slate-400" />
                           <span>Unverified</span>
                         </span>
+                      )}
+
+                      {onTestServerAccess && (
+                        <button
+                          type="button"
+                          id={`btn-probe-server-${server.id}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleProbe(server);
+                          }}
+                          disabled={probingId === server.id}
+                          title="Execute live TCP and Redfish/IPMI check on this node"
+                          className="px-1.5 py-0.5 text-[9px] font-medium text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 border border-indigo-200 rounded transition-colors flex items-center gap-0.5 disabled:opacity-50"
+                        >
+                          <RefreshCw className={`w-2.5 h-2.5 ${probingId === server.id ? 'animate-spin' : ''}`} />
+                          <span>{probingId === server.id ? '...' : 'Check'}</span>
+                        </button>
                       )}
                     </div>
                   </td>

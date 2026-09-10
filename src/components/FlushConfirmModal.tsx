@@ -94,10 +94,6 @@ export const FlushConfirmModal: React.FC<FlushConfirmModalProps> = ({
               <span>Connected PostgreSQL tables will be truncated and local browser storage cleared.</span>
             </div>
           )}
-
-          <p className="text-slate-500 text-[11px]">
-            Tip: You can restore standard datacenter sample data at any time using the <strong>Reset Demo</strong> button.
-          </p>
         </div>
 
         {/* Action Buttons */}

@@ -18,7 +18,7 @@ import {
 import { UpgradeCampaign } from '../types';
 import { DatabaseStatus } from '../services/api';
 
-export type NavTab = 'fleet' | 'catalog' | 'campaign' | 'compliance' | 'audit';
+export type NavTab = 'fleet' | 'catalog' | 'baremetal' | 'campaign' | 'compliance' | 'audit';
 
 interface HeaderProps {
   activeTab: NavTab;
@@ -120,17 +120,6 @@ export const Header: React.FC<HeaderProps> = ({
               </button>
             )}
 
-            <button
-              type="button"
-              id="btn-reset-demo"
-              onClick={onResetDemo}
-              title="Reset fleet state to standard demo environment"
-              className="px-2.5 py-1.5 rounded-lg text-xs font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-100 border border-slate-200 transition-colors flex items-center gap-1.5"
-            >
-              <RotateCcw className="w-3.5 h-3.5 text-slate-500" />
-              <span>Reset Demo</span>
-            </button>
-
             {onOpenFlushConfirm && (
               <button
                 type="button"
@@ -200,6 +189,23 @@ export const Header: React.FC<HeaderProps> = ({
           >
             <Layers className="w-4 h-4" />
             <span>Firmware Catalog</span>
+          </button>
+
+          <button
+            type="button"
+            id="tab-baremetal"
+            onClick={() => onTabChange('baremetal')}
+            className={`flex items-center gap-2 py-3 px-4 text-xs font-semibold border-b-2 transition-colors ${
+              activeTab === 'baremetal'
+                ? 'border-indigo-600 text-indigo-600'
+                : 'border-transparent text-slate-600 hover:text-slate-900 hover:border-slate-300'
+            }`}
+          >
+            <Cpu className="w-4 h-4 text-indigo-500" />
+            <span>Deploy Baremetal ESXi</span>
+            <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-full bg-blue-100 text-blue-800">
+              DELL / Lenovo
+            </span>
           </button>
 
           <button

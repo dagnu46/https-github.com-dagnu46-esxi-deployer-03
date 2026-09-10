@@ -10,6 +10,11 @@ export interface TestAccessParams {
   onStepUpdate?: (steps: AccessTestStep[]) => void;
 }
 
+/**
+ * Execute real live network socket connectivity, BMC port handshake,
+ * and out-of-band Redfish / IPMI hardware telemetry query.
+ * No sandbox or mock simulation: connects directly to real hosts and controllers.
+ */
 export async function testServerAccess(params: TestAccessParams): Promise<AccessTestResult> {
   const { hostname, ip, bmcIp, bmcAffectedType, model, credentials, onStepUpdate } = params;
 
@@ -20,56 +25,52 @@ export async function testServerAccess(params: TestAccessParams): Promise<Access
   const steps: AccessTestStep[] = [
     {
       id: 'step-network',
-      name: 'Network Route & ICMP Reachability',
+      name: `Host & Network Socket Route (${targetHostIp || targetBmcIp})`,
       status: 'pending',
-      message: `Pinging BMC target at ${targetBmcIp} and Host IP ${targetHostIp}...`,
+      message: `Establishing TCP route to Host ${targetHostIp || 'N/A'} and BMC ${targetBmcIp}...`,
     },
     {
       id: 'step-port',
-      name: `OOB Service Port (${credentials.bmcPort}) & TLS Handshake`,
+      name: `OOB Service Port (${credentials.bmcPort}) TLS Handshake`,
       status: 'pending',
-      message: `Checking TCP port ${credentials.bmcPort} on ${targetBmcIp}...`,
+      message: `Probing TCP port ${credentials.bmcPort} on ${targetBmcIp}...`,
     },
     {
       id: 'step-auth',
-      name: `BMC Authentication (${credentials.bmcProtocol.toUpperCase()})`,
+      name: `BMC Controller Authentication (${(credentials.bmcProtocol || 'redfish').toUpperCase()})`,
       status: 'pending',
-      message: `Authenticating with user '${credentials.bmcUsername || 'anonymous'}'...`,
+      message: `Authenticating with principal "${credentials.bmcUsername || 'root'}" on remote BMC...`,
     },
     {
       id: 'step-discovery',
-      name: 'Chassis Telemetry & Hardware Discovery',
+      name: 'Chassis Telemetry & Hardware Inventory Query',
       status: 'pending',
-      message: 'Querying Redfish Systems & Managers inventory...',
+      message: 'Querying Redfish Systems & Managers hardware inventory...',
     },
   ];
 
   if (credentials.enableSsh) {
     steps.push({
       id: 'step-ssh',
-      name: `Host OS In-Band Access (SSH Port ${credentials.sshPort || 22})`,
+      name: `Host OS In-Band SSH (${credentials.sshPort || 22}) Probe`,
       status: 'pending',
-      message: `Connecting to ${targetHostIp}:${credentials.sshPort || 22} as '${credentials.sshUsername || 'root'}'...`,
+      message: `Connecting to ${targetHostIp}:${credentials.sshPort || 22} as "${credentials.sshUsername || 'root'}"...`,
     });
   }
 
   const update = (stepIndex: number, partial: Partial<AccessTestStep>) => {
-    steps[stepIndex] = { ...steps[stepIndex], ...partial };
-    if (onStepUpdate) {
-      onStepUpdate([...steps]);
+    if (stepIndex >= 0 && stepIndex < steps.length) {
+      steps[stepIndex] = { ...steps[stepIndex], ...partial };
+      if (onStepUpdate) {
+        onStepUpdate([...steps]);
+      }
     }
   };
-
-  const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
-
-  // --- Step 1: Network Ping ---
-  update(0, { status: 'running' });
-  await delay(320);
 
   if (!targetHostIp && !targetBmcIp) {
     update(0, {
       status: 'failed',
-      message: 'Failed: Neither Host IP nor BMC IP was provided.',
+      message: 'Network check failed: Neither Host IP nor BMC IP was provided.',
       details: 'Please enter a valid IP address or FQDN.',
     });
     return {
@@ -81,148 +82,87 @@ export async function testServerAccess(params: TestAccessParams): Promise<Access
     };
   }
 
-  const pingLatency = Math.floor(1 + Math.random() * 4);
-  update(0, {
-    status: 'success',
-    latencyMs: pingLatency,
-    message: `Host & BMC IP reachable via ICMP (RTT: ${pingLatency}.2ms, 0% packet loss)`,
-    details: `Route established to ${targetBmcIp} via Gateway 10.120.0.1`,
-  });
-
-  // --- Step 2: Port & TLS Handshake ---
+  // Update initial active status
+  update(0, { status: 'running' });
   update(1, { status: 'running' });
-  await delay(350);
 
-  const portLatency = Math.floor(6 + Math.random() * 8);
-  if (credentials.bmcPort <= 0 || credentials.bmcPort > 65535) {
-    update(1, {
-      status: 'failed',
-      message: `Connection refused: Invalid port ${credentials.bmcPort}`,
-      details: 'Port number must be between 1 and 65535.',
+  try {
+    const res = await fetch('/api/servers/test-access', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        hostname: hostname.trim() || 'unnamed-server',
+        ip: targetHostIp,
+        bmcIp: targetBmcIp,
+        bmcAffectedType,
+        model,
+        credentials
+      })
     });
+
+    const data = await res.json();
+
+    if (!res.ok || data.status === 'failed') {
+      const serverSteps: AccessTestStep[] = Array.isArray(data.steps) && data.steps.length > 0
+        ? data.steps
+        : steps.map(s => ({
+            ...s,
+            status: s.status === 'running' ? 'failed' as const : s.status,
+            message: s.status === 'running' ? (data.summary || data.error || 'Connection failed') : s.message
+          }));
+
+      if (onStepUpdate) {
+        onStepUpdate(serverSteps);
+      }
+
+      return {
+        status: 'failed',
+        testedAt: data.testedAt || new Date().toISOString(),
+        testedBy: 'Real Network Probe',
+        summary: data.summary || data.error || 'Server access probe failed.',
+        latencyMs: data.latencyMs,
+        steps: serverSteps,
+        errorDetails: data.errorDetails || data.error || 'Remote host or BMC port was unreachable.'
+      };
+    }
+
+    // Success with real verified telemetry
+    const resultSteps: AccessTestStep[] = Array.isArray(data.steps) && data.steps.length > 0
+      ? data.steps
+      : steps.map(s => ({ ...s, status: 'success' as const }));
+
+    if (onStepUpdate) {
+      onStepUpdate(resultSteps);
+    }
+
     return {
-      status: 'failed',
-      testedAt: new Date().toISOString(),
-      summary: `Port probe failed on ${targetBmcIp}:${credentials.bmcPort}`,
-      steps,
-      errorDetails: `Invalid TCP port: ${credentials.bmcPort}`,
-    };
-  }
-
-  const tlsNote = credentials.ignoreSslErrors
-    ? 'TLS 1.3 negotiated (Self-signed certificate accepted by operator policy)'
-    : 'TLS 1.3 negotiated (Verified with root CA chain)';
-  update(1, {
-    status: 'success',
-    latencyMs: portLatency,
-    message: `TCP port ${credentials.bmcPort} is open and accepting connections`,
-    details: tlsNote,
-  });
-
-  // --- Step 3: BMC Authentication ---
-  update(2, { status: 'running' });
-  await delay(420);
-
-  const username = credentials.bmcUsername?.trim();
-  const password = credentials.bmcPassword?.trim();
-
-  // Validate missing credentials
-  if (!username) {
-    update(2, {
-      status: 'failed',
-      message: 'Authentication failed: BMC username cannot be empty.',
-      details: 'HTTP 400 Bad Request: Missing authorization principal header.',
-    });
-    return {
-      status: 'failed',
-      testedAt: new Date().toISOString(),
-      summary: 'Authentication rejected: Missing username',
-      steps,
-      errorDetails: 'BMC credentials username is required.',
-    };
-  }
-
-  // Realistic test of bad credentials
-  if (password === 'wrong' || password === 'invalid' || password === 'fail' || (password === '' && !username)) {
-    update(2, {
-      status: 'failed',
-      message: `Authentication failed (HTTP 401 Unauthorized): Invalid password for '${username}'`,
-      details: `BMC controller rejected authentication attempt. Check your credentials.`,
-    });
-    return {
-      status: 'failed',
-      testedAt: new Date().toISOString(),
-      summary: `BMC 401 Unauthorized for user '${username}'`,
-      steps,
-      errorDetails: 'Invalid BMC password provided.',
-    };
-  }
-
-  const authLatency = Math.floor(12 + Math.random() * 12);
-  update(2, {
-    status: 'success',
-    latencyMs: authLatency,
-    message: `Authenticated successfully as '${username}' via ${credentials.bmcProtocol.toUpperCase()}`,
-    details: `Session token issued (Redfish X-Auth-Token / Privileged Operator Role)`,
-  });
-
-  // --- Step 4: Telemetry & Hardware Discovery ---
-  update(3, { status: 'running' });
-  await delay(380);
-
-  // Generate realistic discovered chassis telemetry
-  const serialSuffix = (hostname.replace(/[^a-zA-Z0-9]/g, '') + '8921').slice(-6).toUpperCase();
-  const serialNumber = model.startsWith('Dell') 
-    ? `SVC-TAG-${serialSuffix}`
-    : model.startsWith('HPE') 
-      ? `HPE-CZJ-${serialSuffix}` 
-      : `SMC-SN-${serialSuffix}`;
-
-  const redfishVer = model.startsWith('Dell') ? 'v1.15.1 (iDRAC9)' : model.startsWith('HPE') ? 'v1.14.0 (iLO 5)' : 'v1.12.0';
-  const detectedBmcVersion = model.startsWith('Dell') ? '6.10.30.00' : model.startsWith('HPE') ? '2.98' : '3.88';
-  const detectedBiosVersion = model.startsWith('Dell') ? '2.18.1' : model.startsWith('HPE') ? '2.92_07-2026' : '3.4b';
-
-  const discoveryLatency = Math.floor(14 + Math.random() * 10);
-  update(3, {
-    status: 'success',
-    latencyMs: discoveryLatency,
-    message: `Discovered chassis: ${model} [Serial: ${serialNumber}], Power: ON, Health: OK`,
-    details: `BMC Version: ${detectedBmcVersion} • BIOS: ${detectedBiosVersion} • Redfish API ${redfishVer}`,
-  });
-
-  // --- Step 5: SSH Host In-Band Probe (Optional) ---
-  if (credentials.enableSsh) {
-    update(4, { status: 'running' });
-    await delay(360);
-
-    const sshLatency = Math.floor(10 + Math.random() * 10);
-    const sshUser = credentials.sshUsername?.trim() || 'root';
-    update(4, {
       status: 'success',
-      latencyMs: sshLatency,
-      message: `SSH connection verified on port ${credentials.sshPort || 22} as '${sshUser}'`,
-      details: `Linux Kernel 6.8.0-enterprise • Agent status: ready for in-band staging`,
-    });
+      testedAt: data.testedAt || new Date().toISOString(),
+      testedBy: 'Real Network Probe',
+      summary: data.summary || `Verified real ${credentials.bmcProtocol?.toUpperCase() || 'Redfish'} access to ${targetBmcIp}:${credentials.bmcPort} (${data.latencyMs || 0}ms)`,
+      latencyMs: data.latencyMs,
+      steps: resultSteps,
+      discoveredHardware: data.discoveredHardware || undefined
+    };
+  } catch (err: any) {
+    const networkErrMsg = err?.message || 'Failed to dispatch network socket probe.';
+    const failedSteps = steps.map(s => ({
+      ...s,
+      status: s.status === 'running' ? 'failed' as const : s.status,
+      message: s.status === 'running' ? `Real network probe failed: ${networkErrMsg}` : s.message
+    }));
+
+    if (onStepUpdate) {
+      onStepUpdate(failedSteps);
+    }
+
+    return {
+      status: 'failed',
+      testedAt: new Date().toISOString(),
+      testedBy: 'Real Network Probe',
+      summary: `Network socket probe error: ${networkErrMsg}`,
+      steps: failedSteps,
+      errorDetails: networkErrMsg
+    };
   }
-
-  const totalLatency = pingLatency + portLatency + authLatency + discoveryLatency;
-
-  return {
-    status: 'success',
-    testedAt: new Date().toISOString(),
-    testedBy: 'Local Management Console',
-    summary: `Verified ${credentials.bmcProtocol.toUpperCase()} access to ${bmcAffectedType} (${totalLatency}ms response)`,
-    latencyMs: totalLatency,
-    steps,
-    discoveredHardware: {
-      model,
-      serialNumber,
-      powerState: 'on',
-      bmcVersionDetected: detectedBmcVersion,
-      biosVersionDetected: detectedBiosVersion,
-      chassisHealth: 'OK',
-      macAddress: `00:1E:67:${Math.floor(10 + Math.random() * 89)}:${Math.floor(10 + Math.random() * 89)}:${Math.floor(10 + Math.random() * 89)}`,
-      redfishVersion: redfishVer,
-    },
-  };
 }

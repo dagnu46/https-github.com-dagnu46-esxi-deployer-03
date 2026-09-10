@@ -83,24 +83,9 @@ export const FleetOverview: React.FC<FleetOverviewProps> = ({
 
   return (
     <div className="space-y-4 mb-6">
-      {/* Metric Cards Grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* Card 1: Total Fleet */}
-        <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Fleet Nodes</span>
-            <div className="w-8 h-8 rounded-lg bg-slate-100 flex items-center justify-center text-slate-700">
-              <HardDrive className="w-4 h-4" />
-            </div>
-          </div>
-          <div className="mt-3 flex items-baseline justify-between">
-            <span className="text-2xl font-bold text-slate-900">{totalServers}</span>
-            <span className="text-xs font-medium text-slate-500">x86_64 Architecture</span>
-          </div>
-          <p className="mt-1 text-xs text-slate-500">100% Redfish BMC API Reachable</p>
-        </div>
-
-        {/* Card 2: Compliance Rate */}
+      {/* Metric Cards Grid - Cleaned up to remove Number of servers managed, Redfish version, and Number of critical security patches */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        {/* Card 1: Compliance Rate */}
         <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs">
           <div className="flex items-center justify-between">
             <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Baseline Compliance</span>
@@ -111,7 +96,7 @@ export const FleetOverview: React.FC<FleetOverviewProps> = ({
           <div className="mt-3 flex items-baseline justify-between">
             <span className="text-2xl font-bold text-slate-900">{compliancePercentage}%</span>
             <span className="text-xs font-medium text-emerald-600 font-mono">
-              {fullyCompliantServers.length}/{totalServers} nodes
+              {fullyCompliantServers.length}/{totalServers} compliant nodes
             </span>
           </div>
           {/* Visual Mini Progress Bar */}
@@ -123,30 +108,7 @@ export const FleetOverview: React.FC<FleetOverviewProps> = ({
           </div>
         </div>
 
-        {/* Card 3: Security & Critical */}
-        <div className={`border rounded-xl p-4 shadow-xs transition-colors ${
-          criticalServers.length > 0 
-            ? 'bg-amber-50/50 border-amber-200' 
-            : 'bg-white border-slate-200'
-        }`}>
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Vulnerabilities</span>
-            <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
-              criticalServers.length > 0 ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-600'
-            }`}>
-              <AlertTriangle className="w-4 h-4" />
-            </div>
-          </div>
-          <div className="mt-3 flex items-baseline justify-between">
-            <span className={`text-2xl font-bold ${criticalServers.length > 0 ? 'text-amber-800' : 'text-slate-900'}`}>
-              {criticalServers.length}
-            </span>
-            <span className="text-xs font-medium text-amber-700">CVE mitigation ready</span>
-          </div>
-          <p className="mt-1 text-xs text-slate-600">Spectre SMM & OpenSSL patches</p>
-        </div>
-
-        {/* Card 4: Total Updates Pending */}
+        {/* Card 2: Total Updates Pending */}
         <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-xs">
           <div className="flex items-center justify-between">
             <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Updates Available</span>
@@ -160,7 +122,7 @@ export const FleetOverview: React.FC<FleetOverviewProps> = ({
               {updateAvailableServers.length} servers behind
             </span>
           </div>
-          <p className="mt-1 text-xs text-slate-500">BIOS, iDRAC, Mellanox NIC, PERC</p>
+          <p className="mt-1 text-xs text-slate-500">BIOS, Out-of-Band Controller, NIC, Storage RAID</p>
         </div>
       </div>
 

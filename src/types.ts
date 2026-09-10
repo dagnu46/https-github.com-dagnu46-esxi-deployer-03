@@ -1,6 +1,6 @@
 export type ServerVendor = 'HP' | 'DELL' | 'LENOVO';
 
-export type HypervisorType = 'VMware ESXi' | 'VMware ESXi on Nutanix' | 'Xen Server';
+export type HypervisorType = 'VMware ESXi' | 'VMware ESXi on Nutanix' | 'Xen Server' | 'Baremetal (No OS)';
 
 export type ServerModel = 
   // HP / HPE
@@ -449,5 +449,148 @@ export interface VmwareLiveVerificationResult {
   recommendedAction: string;
   error?: string;
 }
+
+// -------------------------------------------------------------
+// Bare-Metal VMware ESXi Deployment Orchestrator Types
+// (Dell OpenManage & Lenovo LXCA Workflows)
+// -------------------------------------------------------------
+
+export type BaremetalVendor = 'DELL' | 'LENOVO';
+
+export interface BaremetalNetworkProfile {
+  hostname: string;
+  useDhcp: boolean;
+  staticIp?: string;
+  subnetMask?: string;
+  gateway?: string;
+  dnsServers?: string;
+  ntpServers?: string;
+  managementVlan?: number;
+  rootPassword?: string;
+  enableSsh: boolean;
+  enableEsxiShell: boolean;
+  vmk0UplinkNics: string[];
+}
+
+export interface DellOpenManageWorkflowConfig {
+  omeHost: string;
+  omePort: number;
+  omeUsername: string;
+  omePassword?: string;
+  deviceGroupId: string;
+  deviceGroupName: string;
+  templateId: string;
+  templateName: string; // e.g. "PowerEdge ESXi 8.0 Deployment Template"
+  targetBootDevice: 'BOSS-S1_RAID1' | 'BOSS-S2_RAID1' | 'PERC_H755_RAID1' | 'PERC_H740P_RAID1' | 'FIRST_DISK';
+  dellCustomizedIso: string; // e.g. "VMware-VMvisor-Installer-8.0U2-Dell-Customized-A01.iso"
+  installIsmAgent: boolean; // Dell iDRAC Service Module (iSM)
+  installOmsaVib: boolean; // OpenManage Server Administrator VIB
+  enableSecureBoot: boolean;
+  virtualizationVT: boolean;
+  sriovEnabled: boolean;
+  powerProfile: 'Performance' | 'DAPC' | 'PerformancePerWatt';
+  autoRegisterOmeInventory: boolean;
+  networkProfile: BaremetalNetworkProfile;
+}
+
+export interface LenovoLxcaWorkflowConfig {
+  lxcaHost: string;
+  lxcaPort: number;
+  lxcaUsername: string;
+  lxcaPassword?: string;
+  configPatternId: string;
+  configPatternName: string; // e.g. "ThinkSystem SR650 ESXi UEFI+RAID Pattern"
+  targetBootDevice: 'M2_RAID1' | 'RAID_930_8i_VD0' | 'RAID_530_8i_VD0' | 'FIRST_DRIVE';
+  lenovoCustomizedIso: string; // e.g. "VMware-VMvisor-Installer-8.0U2-Lenovo-ThinkSystem-v1.4.iso"
+  enableXccAgentProvider: boolean; // Lenovo XCC Agent & CIM Provider
+  enableSecureBoot: boolean;
+  uefiBootMode: 'UEFI_Only' | 'Legacy';
+  autoManageInLxca: boolean;
+  networkProfile: BaremetalNetworkProfile;
+}
+
+export type BaremetalDeployStage = 
+  | 'discovery'
+  | 'template_profile_apply'
+  | 'storage_raid_provision'
+  | 'media_mount'
+  | 'kickstart_injection'
+  | 'installer_boot'
+  | 'esxi_installing'
+  | 'installer_reboot'
+  | 'post_check_running'
+  | 'post_check_passed'
+  | 'post_check_failed';
+
+export interface BaremetalDeploymentLog {
+  timestamp: string;
+  level: 'info' | 'success' | 'warn' | 'error';
+  source: 'OME' | 'LXCA' | 'iDRAC' | 'XCC' | 'KICKSTART' | 'ESXi' | 'vCenter';
+  message: string;
+  details?: string;
+}
+
+export interface PostInstallEsxiValidation {
+  validatedAt: string;
+  hostPingable: boolean;
+  httpsResponding: boolean; // port 443 Host Client
+  sshResponding: boolean; // port 22
+  vSphereAgentResponding: boolean; // port 902
+  esxiVersionDetected: string;
+  esxiBuildDetected: string;
+  oemCustomImageVerified: boolean;
+  oemAddonName: string; // "Dell Technologies Custom Add-on" or "Lenovo ThinkSystem Custom Image"
+  managementAgentStatus: {
+    agentName: string; // "Dell iDRAC Service Module (iSM)" or "Lenovo XCC Agent Provider"
+    running: boolean;
+    version: string;
+    details: string;
+  };
+  vendorConsoleManagedState: 'Managed & Synchronized' | 'Inventory Refreshed' | 'Pending Agent Sync' | 'Failed';
+  vcenterStatus: {
+    registered: boolean;
+    vcenterHost?: string;
+    cluster?: string;
+    datacenter?: string;
+    inMaintenanceMode: boolean;
+    taskMessage?: string;
+  };
+  networkConfig: {
+    vmk0Ip: string;
+    vmk0Mask: string;
+    vmk0Vlan?: number;
+    uplinkNics: string[];
+    vSwitch: string;
+  };
+  storageConfig: {
+    bootDisk: string;
+    datastoreName: string;
+    datastoreSizeGb: number;
+    vmfsVersion: string;
+  };
+  healthCheckScore: number; // 0-100%
+}
+
+export interface BaremetalEsxiDeploymentJob {
+  id: string;
+  serverId: string;
+  serverHostname: string;
+  vendor: BaremetalVendor;
+  model: string;
+  bmcIp: string;
+  esxiVersion: string; // "8.0U2" or "7.0U3"
+  status: 'pending' | 'in_progress' | 'installed' | 'failed' | 'cancelled';
+  stage: BaremetalDeployStage;
+  currentStepMessage: string;
+  progressPercent: number;
+  startedAt: string;
+  completedAt?: string;
+  targetManagementIp: string;
+  dellConfig?: DellOpenManageWorkflowConfig;
+  lenovoConfig?: LenovoLxcaWorkflowConfig;
+  logs: BaremetalDeploymentLog[];
+  postInstallValidation?: PostInstallEsxiValidation;
+}
+
 
 

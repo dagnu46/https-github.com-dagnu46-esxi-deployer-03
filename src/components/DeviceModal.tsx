@@ -62,6 +62,10 @@ const VENDOR_MODELS: Record<ServerVendor, { model: ServerModel; label: string; b
 };
 
 const HYPERVISOR_DEFAULTS: Record<HypervisorType, { defaultVersion: string; defaultCluster: string }> = {
+  'Baremetal (No OS)': {
+    defaultVersion: 'Uninstalled (Awaiting ESXi ISO Staging)',
+    defaultCluster: 'Baremetal-Staging-Rack',
+  },
   'VMware ESXi': {
     defaultVersion: 'ESXi 8.0 Update 2 (Build 22380479)',
     defaultCluster: 'ESXi-VCF-Production-Ashburn',

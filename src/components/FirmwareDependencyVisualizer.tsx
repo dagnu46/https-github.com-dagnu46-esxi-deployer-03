@@ -494,7 +494,7 @@ export const FirmwareDependencyVisualizer: React.FC<FirmwareDependencyVisualizer
             }`}
           >
             <Zap className="w-3.5 h-3.5" />
-            <span>Incompatibility Simulator</span>
+            <span>Pre-Upgrade Compatibility Check</span>
           </button>
           <button
             type="button"

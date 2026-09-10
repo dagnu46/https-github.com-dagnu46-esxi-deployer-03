@@ -50,6 +50,7 @@ interface FirmwareCatalogProps {
   onDeployPackage: (pkg: FirmwarePackage) => void;
   onQuickUpgradeServer?: (server: Server, component: ComponentType) => void;
   onOpenVmwareIsoTester?: (pkg?: FirmwarePackage) => void;
+  onShowToast?: (msg: string, type?: 'success' | 'info' | 'warn') => void;
 }
 
 const ALL_MODELS: ServerModel[] = [
@@ -71,6 +72,7 @@ export const FirmwareCatalog: React.FC<FirmwareCatalogProps> = ({
   onDeployPackage,
   onQuickUpgradeServer,
   onOpenVmwareIsoTester,
+  onShowToast,
 }) => {
   // View mode: repository package cards vs fleet matrix cross-reference vs component dependencies
   const [viewMode, setViewMode] = useState<'packages' | 'matrix' | 'dependencies'>('packages');
@@ -90,7 +92,6 @@ export const FirmwareCatalog: React.FC<FirmwareCatalogProps> = ({
   const [isStorageExplorerOpen, setIsStorageExplorerOpen] = useState(false);
   const [storageExplorerTargetFile, setStorageExplorerTargetFile] = useState<string | null>(null);
   const [selectedInspectPkg, setSelectedInspectPkg] = useState<FirmwarePackage | null>(null);
-  const [showVcenterTaskFaq, setShowVcenterTaskFaq] = useState(false);
   const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
 
   // Form state
@@ -406,9 +407,6 @@ export const FirmwareCatalog: React.FC<FirmwareCatalogProps> = ({
               {packages.length} Packages Verified
             </span>
           </div>
-          <p className="text-xs text-slate-500 mt-1 max-w-2xl">
-            Upload and track cryptographically validated firmware binaries, associate them with server hardware models, and inspect installed versions across the inventory.
-          </p>
         </div>
 
         <div className="flex items-center space-x-3">
@@ -467,17 +465,6 @@ export const FirmwareCatalog: React.FC<FirmwareCatalogProps> = ({
           >
             <HardDrive className="w-4 h-4 text-emerald-600" />
             <span>Server Storage Explorer</span>
-          </button>
-
-          <button
-            type="button"
-            id="btn-vcenter-task-faq"
-            onClick={() => setShowVcenterTaskFaq(true)}
-            className="inline-flex items-center gap-1.5 px-3 py-2 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 rounded-lg text-xs font-semibold shadow-xs transition-colors"
-            title="Learn why tasks might not appear in vCenter Recent Tasks"
-          >
-            <HelpCircle className="w-4 h-4 text-amber-600" />
-            <span>Why No Task in vCenter?</span>
           </button>
 
           {onOpenVmwareIsoTester && (
@@ -1455,6 +1442,7 @@ export const FirmwareCatalog: React.FC<FirmwareCatalogProps> = ({
           setStorageExplorerTargetFile(null);
         }}
         targetFile={storageExplorerTargetFile}
+        onShowToast={onShowToast}
       />
 
       {/* Per-Package Server File Inspector Modal */}
@@ -1480,111 +1468,6 @@ export const FirmwareCatalog: React.FC<FirmwareCatalogProps> = ({
             }
           }}
         />
-      )}
-
-      {/* Why No Task in vCenter FAQ Modal */}
-      {showVcenterTaskFaq && (
-        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/75 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-150">
-          <div className="relative bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl max-w-2xl w-full text-slate-100 overflow-hidden">
-            <div className="px-6 py-4 bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 border-b border-slate-700 flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-amber-500/10 border border-amber-500/30 rounded-xl text-amber-400">
-                  <HelpCircle className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="text-base font-bold text-slate-100">
-                    Why Don't I See Tasks in vCenter When Mounting an ISO?
-                  </h3>
-                  <p className="text-xs text-slate-400">
-                    Understanding VMware vCenter Task Generation & Network Requirements
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowVcenterTaskFaq(false)}
-                className="p-1 rounded-lg text-slate-400 hover:text-white transition-colors"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <div className="p-6 space-y-4 text-xs text-slate-300 max-h-[75vh] overflow-y-auto">
-              <div className="p-4 bg-amber-950/30 border border-amber-500/40 rounded-xl space-y-2">
-                <h4 className="font-bold text-amber-300 text-sm flex items-center gap-2">
-                  <AlertCircle className="w-4 h-4 text-amber-400" />
-                  Primary Technical Causes
-                </h4>
-                <p className="text-slate-300 leading-relaxed">
-                  When you attach or mount an ISO onto a virtual machine, VMware vCenter registers a <code className="bg-slate-800 px-1.5 py-0.5 rounded text-cyan-300 font-mono">ReconfigVM_Task</code> in its <strong>Recent Tasks</strong> panel only if specific architectural conditions are met:
-                </p>
-              </div>
-
-              {/* Cause 1 */}
-              <div className="p-4 bg-slate-800/60 border border-slate-700 rounded-xl space-y-2">
-                <div className="flex items-center gap-2 text-cyan-400 font-bold text-sm">
-                  <span className="w-5 h-5 rounded-full bg-cyan-500/20 flex items-center justify-center text-xs">1</span>
-                  <span>Target VM Inventory Discrepancy</span>
-                </div>
-                <p className="text-slate-300 leading-relaxed pl-7">
-                  The ReconfigVM operation requires a real virtual machine managed by the target vCenter inventory. If the VM identifier or name does not exist on that vCenter host, the REST API call fails before creating a queued task in the vCenter Recent Tasks view.
-                </p>
-                <div className="pl-7 text-[11px] text-cyan-300/80 font-mono">
-                  Solution: Connect to vCenter first, select an existing VM from the discovered inventory, and verify its hardware status.
-                </div>
-              </div>
-
-              {/* Cause 2 */}
-              <div className="p-4 bg-slate-800/60 border border-slate-700 rounded-xl space-y-2">
-                <div className="flex items-center gap-2 text-indigo-400 font-bold text-sm">
-                  <span className="w-5 h-5 rounded-full bg-indigo-500/20 flex items-center justify-center text-xs">2</span>
-                  <span>Private RFC-1918 Network Isolation</span>
-                </div>
-                <p className="text-slate-300 leading-relaxed pl-7">
-                  vCenter servers are usually deployed on internal private networks (e.g. <code className="bg-slate-900 px-1 py-0.5 rounded font-mono text-slate-200">192.168.x.x</code>, <code className="bg-slate-900 px-1 py-0.5 rounded font-mono text-slate-200">10.x.x.x</code>). Applications running in cloud container environments cannot route packets directly into private on-prem subnets without a VPN tunnel or reverse SSH proxy.
-                </p>
-                <div className="pl-7 text-[11px] text-indigo-300/80 font-mono">
-                  Solution: Deploy this application inside the same network or use a public FQDN with port 443 forwarded.
-                </div>
-              </div>
-
-              {/* Cause 3 */}
-              <div className="p-4 bg-slate-800/60 border border-slate-700 rounded-xl space-y-2">
-                <div className="flex items-center gap-2 text-emerald-400 font-bold text-sm">
-                  <span className="w-5 h-5 rounded-full bg-emerald-500/20 flex items-center justify-center text-xs">3</span>
-                  <span>ISO Must Reside on an ESXi Datastore (Not Local Web Server Disk)</span>
-                </div>
-                <p className="text-slate-300 leading-relaxed pl-7">
-                  VMware ESXi hypervisors cannot read ISO files directly from your web server's <code className="bg-slate-900 px-1 py-0.5 rounded font-mono text-slate-200">/uploads/firmware/</code> folder. The ISO <strong>must be transferred to a VMware Datastore</strong> (e.g. <code className="bg-slate-900 px-1 py-0.5 rounded font-mono text-emerald-300">[datastore1] iso/package.iso</code>). Once the file exists on the ESXi datastore, the virtual CD/DVD drive reconfigure request can reference it.
-                </p>
-                <div className="pl-7 text-[11px] text-emerald-300/80 font-mono">
-                  Solution: Use Step 4 in the VMware ISO Tester to upload the ISO directly to your datastore.
-                </div>
-              </div>
-
-              {/* Cause 4 */}
-              <div className="p-4 bg-slate-800/60 border border-slate-700 rounded-xl space-y-2">
-                <div className="flex items-center gap-2 text-purple-400 font-bold text-sm">
-                  <span className="w-5 h-5 rounded-full bg-purple-500/20 flex items-center justify-center text-xs">4</span>
-                  <span>Session Authentication & Reconfig Permissions</span>
-                </div>
-                <p className="text-slate-300 leading-relaxed pl-7">
-                  To trigger a visible task in vCenter, the session must have <code className="bg-slate-900 px-1 py-0.5 rounded font-mono text-purple-300">VirtualMachine.Config.AddExistingDisk</code> and <code className="bg-slate-900 px-1 py-0.5 rounded font-mono text-purple-300">VirtualMachine.Config.RawDevice</code> permissions.
-                </p>
-              </div>
-            </div>
-
-            <div className="px-6 py-4 bg-slate-900 border-t border-slate-800 flex justify-end">
-              <button
-                type="button"
-                onClick={() => setShowVcenterTaskFaq(false)}
-                className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg text-xs transition-colors"
-              >
-                Got It
-              </button>
-            </div>
-          </div>
-        </div>
       )}
     </div>
   );

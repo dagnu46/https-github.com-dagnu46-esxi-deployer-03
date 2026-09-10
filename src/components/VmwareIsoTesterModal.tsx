@@ -467,22 +467,33 @@ export const VmwareIsoTesterModal: React.FC<VmwareIsoTesterModalProps> = ({
     );
 
     let fileBase64: string | undefined = undefined;
-    let fileSize = 2097152; // 2MB default simulated size
+    let fileSize = 0;
 
-    if (uploadedFile) {
-      fileSize = uploadedFile.size;
-      try {
-        fileBase64 = await new Promise((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => resolve(reader.result as string);
-          reader.onerror = reject;
-          reader.readAsDataURL(uploadedFile);
-        });
-      } catch (err: any) {
-        addLog('UPLOAD', `Could not read local file: ${err.message}`, 'error');
-        setIsUploading(false);
-        return;
+    if (!uploadedFile) {
+      addLog(
+        'UPLOAD',
+        'Please select a firmware ISO file from your workstation before initiating datastore upload.',
+        'error'
+      );
+      if (onShowToast) {
+        onShowToast('Please select a local ISO file to upload to the datastore.', 'error');
       }
+      setIsUploading(false);
+      return;
+    }
+
+    fileSize = uploadedFile.size;
+    try {
+      fileBase64 = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(uploadedFile);
+      });
+    } catch (err: any) {
+      addLog('UPLOAD', `Could not read local file: ${err.message}`, 'error');
+      setIsUploading(false);
+      return;
     }
 
     const res = await uploadFileToDatastore({

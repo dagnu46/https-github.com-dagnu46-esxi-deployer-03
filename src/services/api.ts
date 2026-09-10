@@ -15,7 +15,9 @@ import {
   VmwarePowerStateResult,
   DiskVerificationResult,
   ServerStorageFile,
-  VmwareLiveVerificationResult
+  VmwareLiveVerificationResult,
+  BaremetalEsxiDeploymentJob,
+  PostInstallEsxiValidation
 } from '../types';
 import { 
   loadServers, 
@@ -142,6 +144,22 @@ export async function syncDeleteServer(id: string): Promise<void> {
   } catch (e) {
     // Local delete handled
   }
+}
+
+export async function syncTestServerAccess(params: {
+  hostname: string;
+  ip: string;
+  bmcIp?: string;
+  bmcAffectedType?: string;
+  model?: string;
+  credentials: any;
+}): Promise<any> {
+  const res = await fetch('/api/servers/test-access', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+  return await res.json();
 }
 
 export async function syncLoadPackages(): Promise<{ packages: FirmwarePackage[]; source: 'postgres' | 'local' }> {
@@ -716,6 +734,185 @@ export async function deleteServerStorageFile(fileName: string, folder: 'firmwar
     return { success: false, error: e.message };
   }
 }
+
+// -------------------------------------------------------------
+// Bare-Metal VMware ESXi Deployment Client Services
+// -------------------------------------------------------------
+
+export async function fetchBaremetalCatalog(): Promise<{
+  success: boolean;
+  dell: {
+    vendor: string;
+    consoleName: string;
+    defaultOmePort: number;
+    templates: any[];
+    customIsos: any[];
+  };
+  lenovo: {
+    vendor: string;
+    consoleName: string;
+    defaultLxcaPort: number;
+    patterns: any[];
+    customIsos: any[];
+  };
+  error?: string;
+}> {
+  try {
+    const res = await fetch('/api/baremetal/catalog');
+    return await res.json();
+  } catch (e: any) {
+    return {
+      success: false,
+      dell: { vendor: 'DELL', consoleName: 'Dell OpenManage Enterprise (OME)', defaultOmePort: 443, templates: [], customIsos: [] },
+      lenovo: { vendor: 'LENOVO', consoleName: 'Lenovo XClarity Administrator (LXCA)', defaultLxcaPort: 443, patterns: [], customIsos: [] },
+      error: e.message,
+    };
+  }
+}
+
+export async function fetchBaremetalJobs(): Promise<{
+  success: boolean;
+  jobs: BaremetalEsxiDeploymentJob[];
+  error?: string;
+}> {
+  try {
+    const res = await fetch('/api/baremetal/jobs');
+    return await res.json();
+  } catch (e: any) {
+    return { success: false, jobs: [], error: e.message };
+  }
+}
+
+export async function fetchBaremetalJob(id: string): Promise<{
+  success: boolean;
+  job?: BaremetalEsxiDeploymentJob;
+  error?: string;
+}> {
+  try {
+    const res = await fetch(`/api/baremetal/job/${encodeURIComponent(id)}`);
+    return await res.json();
+  } catch (e: any) {
+    return { success: false, error: e.message };
+  }
+}
+
+export async function startBaremetalDeployment(payload: {
+  serverId?: string;
+  serverHostname?: string;
+  vendor: 'DELL' | 'LENOVO';
+  model?: string;
+  bmcIp?: string;
+  esxiVersion?: string;
+  targetManagementIp?: string;
+  dellConfig?: any;
+  lenovoConfig?: any;
+  networkProfile?: any;
+}): Promise<{
+  success: boolean;
+  job?: BaremetalEsxiDeploymentJob;
+  message?: string;
+  error?: string;
+}> {
+  try {
+    const res = await fetch('/api/baremetal/deploy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    return await res.json();
+  } catch (e: any) {
+    return { success: false, error: e.message };
+  }
+}
+
+export async function stepBaremetalJob(id: string): Promise<{
+  success: boolean;
+  job?: BaremetalEsxiDeploymentJob;
+  error?: string;
+}> {
+  try {
+    const res = await fetch(`/api/baremetal/job/${encodeURIComponent(id)}/step`, {
+      method: 'POST',
+    });
+    return await res.json();
+  } catch (e: any) {
+    return { success: false, error: e.message };
+  }
+}
+
+export async function verifyPostInstallEsxi(payload: {
+  hostIp: string;
+  vendor?: string;
+  esxiVersion?: string;
+  bmcIp?: string;
+}): Promise<{
+  success: boolean;
+  hostIp: string;
+  validation: PostInstallEsxiValidation;
+  diagnostic?: string;
+  error?: string;
+}> {
+  try {
+    const res = await fetch('/api/baremetal/verify-post-install', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    return await res.json();
+  } catch (e: any) {
+    return {
+      success: false,
+      hostIp: payload.hostIp,
+      validation: {
+        validatedAt: new Date().toISOString(),
+        hostPingable: false,
+        httpsResponding: false,
+        sshResponding: false,
+        vSphereAgentResponding: false,
+        esxiVersionDetected: 'Unknown',
+        esxiBuildDetected: 'Unknown',
+        oemCustomImageVerified: false,
+        oemAddonName: 'Unverified',
+        managementAgentStatus: { agentName: 'Agent Probe', running: false, version: '', details: e.message },
+        vendorConsoleManagedState: 'Failed',
+        vcenterStatus: { registered: false, inMaintenanceMode: false, taskMessage: 'Probe failed' },
+        networkConfig: { vmk0Ip: payload.hostIp, vmk0Mask: '255.255.255.0', uplinkNics: [], vSwitch: 'vSwitch0' },
+        storageConfig: { bootDisk: 'Unknown', datastoreName: '', datastoreSizeGb: 0, vmfsVersion: 'VMFS-6' },
+        healthCheckScore: 0,
+      },
+      error: e.message,
+    };
+  }
+}
+
+export async function joinBaremetalVcenter(payload: {
+  hostIp: string;
+  vcenterHost?: string;
+  datacenter?: string;
+  cluster?: string;
+  maintenanceMode?: boolean;
+}): Promise<{
+  success: boolean;
+  taskId?: string;
+  message?: string;
+  vcenterHost?: string;
+  datacenter?: string;
+  cluster?: string;
+  inMaintenanceMode?: boolean;
+  error?: string;
+}> {
+  try {
+    const res = await fetch('/api/baremetal/join-vcenter', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    return await res.json();
+  } catch (e: any) {
+    return { success: false, error: e.message };
+  }
+}
+
 
 
 

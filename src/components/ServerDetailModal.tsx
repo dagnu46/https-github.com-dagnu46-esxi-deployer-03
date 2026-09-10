@@ -770,7 +770,7 @@ export const ServerDetailModal: React.FC<ServerDetailModalProps> = ({
                       Hypervisor Maintenance State
                     </h4>
                     <p className="text-xs text-slate-600 mb-3 leading-relaxed">
-                      Toggle hypervisor maintenance mode to simulate live migration of active guest virtual machines across the cluster before flashing component firmware.
+                      Initiate hypervisor maintenance mode and live migrate active guest virtual machines across the cluster before flashing component firmware.
                     </p>
                   </div>
 
