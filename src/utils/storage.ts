@@ -7,6 +7,7 @@ const STORAGE_KEYS = {
   AUDIT_LOGS: 'sfm_audit_v1',
   BASELINE: 'sfm_baseline_v1',
   CAMPAIGN: 'sfm_campaign_v1',
+  CAMPAIGNS: 'sfm_campaigns_v2',
   FLUSHED: 'sfm_flushed_v1',
 };
 
@@ -41,6 +42,7 @@ export function flushAllStorage(): void {
     localStorage.setItem(STORAGE_KEYS.FIRMWARE_PACKAGES, JSON.stringify([]));
     localStorage.setItem(STORAGE_KEYS.AUDIT_LOGS, JSON.stringify([]));
     localStorage.removeItem(STORAGE_KEYS.CAMPAIGN);
+    localStorage.removeItem(STORAGE_KEYS.CAMPAIGNS);
   } catch (e) {
     console.error('Failed to flush storage', e);
   }
@@ -151,6 +153,49 @@ export function saveBaseline(baseline: BaselineConfig): void {
   } catch (e) {
     console.error('Failed to save baseline', e);
   }
+}
+
+export function loadCampaigns(): UpgradeCampaign[] {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEYS.CAMPAIGNS);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed;
+    }
+    // Fallback to single campaign if stored in legacy key
+    const single = loadActiveCampaign();
+    return single ? [single] : [];
+  } catch (e) {
+    console.error('Failed to load campaigns', e);
+    return [];
+  }
+}
+
+export function saveCampaigns(campaigns: UpgradeCampaign[]): void {
+  try {
+    localStorage.setItem(STORAGE_KEYS.CAMPAIGNS, JSON.stringify(campaigns));
+    // Keep active campaign in sync
+    const active = campaigns.find(c => c.status === 'running') || campaigns[0] || null;
+    saveActiveCampaign(active);
+  } catch (e) {
+    console.error('Failed to save campaigns', e);
+  }
+}
+
+export function saveCampaign(campaign: UpgradeCampaign): void {
+  const all = loadCampaigns();
+  const idx = all.findIndex(c => c.id === campaign.id);
+  if (idx >= 0) {
+    all[idx] = campaign;
+  } else {
+    all.unshift(campaign);
+  }
+  saveCampaigns(all);
+}
+
+export function deleteCampaign(id: string): void {
+  const all = loadCampaigns().filter(c => c.id !== id);
+  saveCampaigns(all);
 }
 
 export function loadActiveCampaign(): UpgradeCampaign | null {

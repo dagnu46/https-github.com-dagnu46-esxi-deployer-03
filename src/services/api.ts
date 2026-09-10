@@ -4,6 +4,8 @@ import {
   AuditRecord, 
   BaselineConfig, 
   UpgradeCampaign, 
+  UpgradeStage,
+  ComponentType,
   VmwareVcenterConfig, 
   VmwareIsoMountRequest, 
   VmwareIsoMountResult, 
@@ -25,7 +27,11 @@ import {
   loadBaseline, 
   saveBaseline, 
   loadActiveCampaign, 
-  saveActiveCampaign 
+  saveActiveCampaign,
+  loadCampaigns,
+  saveCampaigns,
+  saveCampaign,
+  deleteCampaign
 } from '../utils/storage';
 
 export interface DatabaseStatus {
@@ -232,24 +238,29 @@ export async function syncSaveBaseline(baseline: BaselineConfig): Promise<void> 
   } catch (e) {}
 }
 
-export async function syncLoadCampaign(): Promise<{ campaign: UpgradeCampaign | null; source: 'postgres' | 'local' }> {
+export async function syncLoadCampaigns(): Promise<{ campaigns: UpgradeCampaign[]; source: 'postgres' | 'local' }> {
   try {
     const res = await fetch('/api/campaigns');
     if (res.ok) {
       const data = await res.json();
-      if (Array.isArray(data) && data.length > 0) {
-        const active = data.find(c => c.status === 'running') || data[0];
-        saveActiveCampaign(active);
-        return { campaign: active, source: 'postgres' };
+      if (Array.isArray(data)) {
+        saveCampaigns(data);
+        return { campaigns: data, source: 'postgres' };
       }
     }
   } catch (e) {}
-  return { campaign: loadActiveCampaign(), source: 'local' };
+  return { campaigns: loadCampaigns(), source: 'local' };
 }
 
-export async function syncSaveCampaign(campaign: UpgradeCampaign | null): Promise<void> {
-  saveActiveCampaign(campaign);
-  if (!campaign) return;
+export async function syncLoadCampaign(): Promise<{ campaign: UpgradeCampaign | null; source: 'postgres' | 'local' }> {
+  const result = await syncLoadCampaigns();
+  const active = result.campaigns.find(c => c.status === 'running') || result.campaigns[0] || null;
+  saveActiveCampaign(active);
+  return { campaign: active, source: result.source };
+}
+
+export async function syncSaveCampaign(campaign: UpgradeCampaign): Promise<void> {
+  saveCampaign(campaign);
 
   try {
     await fetch('/api/campaigns', {
@@ -258,6 +269,92 @@ export async function syncSaveCampaign(campaign: UpgradeCampaign | null): Promis
       body: JSON.stringify(campaign),
     });
   } catch (e) {}
+}
+
+export async function syncDeleteCampaign(id: string): Promise<void> {
+  deleteCampaign(id);
+
+  try {
+    await fetch(`/api/campaigns/${id}`, {
+      method: 'DELETE',
+    });
+  } catch (e) {}
+}
+
+export interface TaskStepExecutionParams {
+  campaignId: string;
+  serverId: string;
+  server: Server;
+  stage: UpgradeStage;
+  component: ComponentType;
+  fromVersion: string;
+  toVersion: string;
+  targetFirmwareId?: string;
+  autoReboot?: boolean;
+}
+
+export interface TaskStepExecutionResult {
+  success: boolean;
+  stage: UpgradeStage;
+  nextStage?: UpgradeStage;
+  progressPercent: number;
+  message: string;
+  log: {
+    timestamp: string;
+    level: 'info' | 'warn' | 'error' | 'success';
+    message: string;
+  };
+  networkStatus?: 'reachable' | 'unreachable';
+  ipmiStatus?: 'verified' | 'failed';
+  credentialsStatus?: 'valid' | 'invalid';
+  telemetry?: {
+    latencyMs?: number;
+    powerState?: string;
+    psuRedundant?: boolean;
+    bmcVersion?: string;
+  };
+  error?: string;
+}
+
+export async function syncExecuteCampaignStep(params: TaskStepExecutionParams): Promise<TaskStepExecutionResult> {
+  try {
+    const res = await fetch('/api/campaigns/execute-server-step', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    });
+
+    if (res.ok) {
+      return await res.json();
+    } else {
+      const errData = await res.json().catch(() => ({}));
+      return {
+        success: false,
+        stage: params.stage,
+        progressPercent: 0,
+        message: errData.error || 'Server task execution failed on backend probe',
+        error: errData.error || 'Task execution HTTP error',
+        log: {
+          timestamp: new Date().toLocaleTimeString(),
+          level: 'error',
+          message: `[Task Error] ${errData.error || 'Probe failed'}`
+        }
+      };
+    }
+  } catch (e: any) {
+    return {
+      success: false,
+      stage: params.stage,
+      progressPercent: 0,
+      message: e.message || 'Network error executing server step',
+      error: e.message,
+      log: {
+        timestamp: new Date().toLocaleTimeString(),
+        level: 'error',
+        message: `[Network Error] Could not reach backend task orchestrator: ${e.message}`
+      }
+    };
+  }
 }
 
 // -------------------------------------------------------------

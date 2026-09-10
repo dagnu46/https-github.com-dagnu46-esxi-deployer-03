@@ -646,8 +646,8 @@ export async function upsertCampaign(campaign: UpgradeCampaign): Promise<void> {
           status = EXCLUDED.status,
           concurrency_limit = EXCLUDED.concurrency_limit,
           auto_reboot = EXCLUDED.auto_reboot,
-          stopOnFirstFailure = EXCLUDED.stop_on_first_failure,
-          preflightChecksRequired = EXCLUDED.preflight_checks_required,
+          stop_on_first_failure = EXCLUDED.stop_on_first_failure,
+          preflight_checks_required = EXCLUDED.preflight_checks_required,
           servers = EXCLUDED.servers,
           updated_at = NOW()
       `, [
@@ -665,6 +665,18 @@ export async function upsertCampaign(campaign: UpgradeCampaign): Promise<void> {
       ]);
     } catch (e: any) {
       console.warn('[PostgreSQL] Sync upsert campaign failed, kept in memory:', e.message);
+    }
+  }
+}
+
+export async function deleteCampaignById(id: string): Promise<void> {
+  memCampaigns.delete(id);
+  if (isConnected) {
+    try {
+      const currentPool = initPool();
+      await currentPool.query('DELETE FROM campaigns WHERE id = $1', [id]);
+    } catch (e: any) {
+      console.warn('[PostgreSQL] Sync delete campaign failed:', e.message);
     }
   }
 }

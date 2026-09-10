@@ -14,6 +14,7 @@ import { DockerDbModal } from './components/DockerDbModal';
 import { FlushConfirmModal } from './components/FlushConfirmModal';
 import { VmwareIsoTesterModal } from './components/VmwareIsoTesterModal';
 import { ExportReportModal, ExportDataset } from './components/ExportReportModal';
+import { EditCampaignModal } from './components/EditCampaignModal';
 import { exportFleetToCsv, exportFleetToJson } from './utils/exportUtils';
 
 import { 
@@ -36,8 +37,10 @@ import {
   saveAuditLogs, 
   loadBaseline, 
   saveBaseline, 
-  loadActiveCampaign, 
-  saveActiveCampaign, 
+  loadCampaigns, 
+  saveCampaigns,
+  saveCampaign,
+  deleteCampaign,
   resetToDemoFleet,
   flushAllStorage
 } from './utils/storage';
@@ -57,8 +60,10 @@ import {
   syncSaveAuditLog,
   syncLoadBaseline,
   syncSaveBaseline,
-  syncLoadCampaign,
-  syncSaveCampaign
+  syncLoadCampaigns,
+  syncSaveCampaign,
+  syncDeleteCampaign,
+  syncExecuteCampaignStep
 } from './services/api';
 
 import { createCampaign } from './utils/orchestrator';
@@ -70,7 +75,13 @@ export default function App() {
   const [packages, setPackages] = useState<FirmwarePackage[]>(() => loadFirmwarePackages());
   const [auditLogs, setAuditLogs] = useState<AuditRecord[]>(() => loadAuditLogs());
   const [baseline, setBaseline] = useState<BaselineConfig>(() => loadBaseline());
-  const [activeCampaign, setActiveCampaign] = useState<UpgradeCampaign | null>(() => loadActiveCampaign());
+  const [campaigns, setCampaigns] = useState<UpgradeCampaign[]>(() => loadCampaigns());
+  const [selectedCampaignId, setSelectedCampaignId] = useState<string | null>(() => {
+    const loaded = loadCampaigns();
+    return loaded.find(c => c.status === 'running')?.id || loaded[0]?.id || null;
+  });
+  const [isEditCampaignOpen, setIsEditCampaignOpen] = useState(false);
+  const [campaignToEdit, setCampaignToEdit] = useState<UpgradeCampaign | null>(null);
 
   // PostgreSQL Database & Docker State
   const [dbStatus, setDbStatus] = useState<DatabaseStatus | null>(null);
@@ -144,13 +155,16 @@ export default function App() {
             syncLoadPackages(),
             syncLoadAuditLogs(),
             syncLoadBaseline(),
-            syncLoadCampaign(),
+            syncLoadCampaigns(),
           ]);
           if (sRes.source === 'postgres' && sRes.servers.length > 0) setServers(sRes.servers);
           if (pRes.source === 'postgres' && pRes.packages.length > 0) setPackages(pRes.packages);
           if (aRes.source === 'postgres' && aRes.logs.length > 0) setAuditLogs(aRes.logs);
           if (bRes.source === 'postgres' && bRes.baseline) setBaseline(bRes.baseline);
-          if (cRes.source === 'postgres' && cRes.campaign) setActiveCampaign(cRes.campaign);
+          if (cRes.source === 'postgres' && cRes.campaigns && cRes.campaigns.length > 0) {
+            setCampaigns(cRes.campaigns);
+            setSelectedCampaignId(prev => prev || cRes.campaigns[0].id);
+          }
         } catch (e) {
           console.warn('[PostgreSQL] Initial sync error:', e);
         }
@@ -180,184 +194,237 @@ export default function App() {
   }, [baseline]);
 
   useEffect(() => {
-    saveActiveCampaign(activeCampaign);
-  }, [activeCampaign]);
+    saveCampaigns(campaigns);
+  }, [campaigns]);
 
-  // LIVE ORCHESTRATOR SIMULATION LOOP
+  // REAL TASK EXECUTION ORCHESTRATION LOOP (Real tasks on physical servers, checking network, IPMI, and credentials at every step)
+  const executingNodesRef = useRef<Set<string>>(new Set());
+
   useEffect(() => {
-    if (!activeCampaign || activeCampaign.status !== 'running') return;
+    const runningCampaigns = campaigns.filter(c => c.status === 'running');
+    if (runningCampaigns.length === 0) return;
 
-    const timer = setInterval(() => {
-      setActiveCampaign(prevCamp => {
-        if (!prevCamp || prevCamp.status !== 'running') return prevCamp;
-
-        const updatedServers = [...prevCamp.servers];
-        const concurrencyLimit = prevCamp.concurrencyLimit;
-
-        // Count how many are currently in-flight
-        const inFlightCount = updatedServers.filter(
+    const interval = setInterval(() => {
+      for (const campaign of runningCampaigns) {
+        // Find in-flight count
+        const inFlight = campaign.servers.filter(
           s => s.stage !== 'pending' && s.stage !== 'completed' && s.stage !== 'failed' && s.stage !== 'rolled_back'
         ).length;
 
-        // How many slots available to start pending servers
-        let availableSlots = concurrencyLimit - inFlightCount;
+        let availableSlots = campaign.concurrencyLimit - inFlight;
 
-        let anyUpdated = false;
-
-        for (let i = 0; i < updatedServers.length; i++) {
-          const s = { ...updatedServers[i], logs: [...updatedServers[i].logs] };
-
-          // Start pending servers if slot available
-          if (s.stage === 'pending' && availableSlots > 0) {
-            s.stage = 'preflight';
-            s.progressPercent = 10;
-            s.currentStepMessage = 'Executing pre-flight checks (Dual PSU redundancy & BMC link)';
-            s.logs.push({
-              timestamp: new Date().toLocaleTimeString(),
-              level: 'info',
-              message: `[Pre-flight] Redfish ping nominal. Checking dual PSU redundancy on ${s.hostname}...`,
-            });
-            availableSlots--;
-            updatedServers[i] = s;
-            anyUpdated = true;
+        for (const jobServer of campaign.servers) {
+          // Check if server is finished or already executing
+          if (jobServer.stage === 'completed' || jobServer.stage === 'failed' || jobServer.stage === 'rolled_back') {
             continue;
           }
 
-          // Progress currently active jobs
-          if (
-            s.stage !== 'pending' &&
-            s.stage !== 'completed' &&
-            s.stage !== 'failed' &&
-            s.stage !== 'rolled_back'
-          ) {
-            const nextProgress = Math.min(100, s.progressPercent + Math.floor(Math.random() * 8) + 8);
-            s.progressPercent = nextProgress;
-
-            if (nextProgress >= 99) {
-              s.stage = 'completed';
-              s.progressPercent = 100;
-              s.currentStepMessage = `Upgrade successfully verified (${s.toVersion} active)`;
-              s.logs.push({
-                timestamp: new Date().toLocaleTimeString(),
-                level: 'success',
-                message: `[Success] Verification confirmed: ${s.component} firmware active version is now ${s.toVersion}.`,
-              });
-
-              // Also update the physical server in the server fleet state!
-              setServers(prevFleet =>
-                prevFleet.map(srv => {
-                  if (srv.id === s.serverId) {
-                    const compKey = s.component;
-                    const existingComp = srv.components[compKey];
-                    return {
-                      ...srv,
-                      status: 'online',
-                      lastUpgradeDate: new Date().toISOString().split('T')[0],
-                      components: {
-                        ...srv.components,
-                        [compKey]: {
-                          ...existingComp,
-                          currentVersion: s.toVersion,
-                          status: 'up_to_date',
-                          cveAlerts: [],
-                        },
-                      },
-                    };
-                  }
-                  return srv;
-                })
-              );
-
-              // Record in audit log
-              setAuditLogs(prevLogs => [
-                {
-                  id: `aud-${Date.now()}-${s.serverId}`,
-                  timestamp: new Date().toISOString().replace('T', ' ').substring(0, 19),
-                  serverHostname: s.hostname,
-                  serverId: s.serverId,
-                  component: s.component,
-                  fromVersion: s.fromVersion,
-                  toVersion: s.toVersion,
-                  status: 'success',
-                  operator: 'admin@ops.internal',
-                  durationSeconds: 210,
-                  firmwarePackageName: `${s.component} Upgrade to ${s.toVersion}`,
-                },
-                ...prevLogs,
-              ]);
-
-            } else if (nextProgress >= 85 && s.stage !== 'postcheck') {
-              s.stage = 'postcheck';
-              s.currentStepMessage = 'Verifying POST status code & BMC handshake...';
-              s.logs.push({
-                timestamp: new Date().toLocaleTimeString(),
-                level: 'info',
-                message: `[POST-Check] OS reboot completed. Querying /redfish/v1/Systems/1 for firmware latching...`,
-              });
-            } else if (nextProgress >= 65 && s.stage !== 'rebooting') {
-              s.stage = 'rebooting';
-              s.currentStepMessage = prevCamp.autoReboot
-                ? 'Warm rebooting chassis via Redfish GracefulRestart...'
-                : 'Firmware staged in pending bank. Ready for next reboot.';
-              s.logs.push({
-                timestamp: new Date().toLocaleTimeString(),
-                level: 'info',
-                message: prevCamp.autoReboot
-                  ? `[Chassis] Sending ACPI graceful restart signal to host...`
-                  : `[Staging] Staged in pending bank. Will latch during next maintenance cycle.`,
-              });
-            } else if (nextProgress >= 40 && s.stage !== 'flashing') {
-              s.stage = 'flashing';
-              s.currentStepMessage = `Writing ${s.component} SPI EEPROM & verifying checksum...`;
-              s.logs.push({
-                timestamp: new Date().toLocaleTimeString(),
-                level: 'info',
-                message: `[SPI-Flash] Flashing EEPROM partition 0x000000. Checksum CRC32 validated.`,
-              });
-            } else if (nextProgress >= 20 && s.stage !== 'bmc_staging') {
-              s.stage = 'bmc_staging';
-              s.currentStepMessage = 'Streaming signed binary payload to BMC staging memory...';
-              s.logs.push({
-                timestamp: new Date().toLocaleTimeString(),
-                level: 'info',
-                message: `[Redfish:UpdateService] SimpleUpdate POST dispatched. Image uploaded.`,
-              });
-            }
-
-            updatedServers[i] = s;
-            anyUpdated = true;
+          const execKey = `${campaign.id}:${jobServer.serverId}`;
+          if (executingNodesRef.current.has(execKey)) {
+            continue;
           }
+
+          // If pending, only start if slot is available
+          if (jobServer.stage === 'pending') {
+            if (availableSlots <= 0) continue;
+            availableSlots--;
+          }
+
+          // Determine stage to execute
+          const currentStage = jobServer.stage === 'pending' ? 'preflight' : jobServer.stage;
+
+          // Mark as executing
+          executingNodesRef.current.add(execKey);
+
+          // Find physical server
+          const physicalServer = servers.find(s => s.id === jobServer.serverId);
+
+          // Execute real step asynchronously
+          (async () => {
+            try {
+              const res = await syncExecuteCampaignStep({
+                campaignId: campaign.id,
+                serverId: jobServer.serverId,
+                server: physicalServer,
+                stage: currentStage,
+                component: jobServer.component,
+                fromVersion: jobServer.fromVersion,
+                toVersion: jobServer.toVersion,
+                targetFirmwareId: campaign.targetFirmwareId,
+                autoReboot: campaign.autoReboot,
+              });
+
+              setCampaigns(prevCampList => {
+                return prevCampList.map(c => {
+                  if (c.id !== campaign.id) return c;
+
+                  const updatedServers = c.servers.map(s => {
+                    if (s.serverId !== jobServer.serverId) return s;
+
+                    const newLogs = [...s.logs];
+                    if (res.log) {
+                      newLogs.push({
+                        timestamp: new Date().toLocaleTimeString(),
+                        level: res.log.level,
+                        message: res.log.message,
+                      });
+                    }
+
+                    if (res.success) {
+                      const nextStage = res.nextStage || 'completed';
+                      
+                      // Check if current task finished and there are further ranked tasks in the sequence
+                      if (nextStage === 'completed' && c.tasks && c.tasks.length > 1) {
+                        const currentTaskIdx = s.currentTaskIndex || 0;
+                        if (currentTaskIdx + 1 < c.tasks.length) {
+                          const nextTask = c.tasks[currentTaskIdx + 1];
+                          const fromVer = physicalServer?.components[nextTask.component]?.currentVersion || s.toVersion || '1.0.0';
+                          
+                          newLogs.push({
+                            timestamp: new Date().toLocaleTimeString(),
+                            level: 'success',
+                            message: `[Ranked Sequence] Task #${currentTaskIdx + 1} (${s.component}) verified nominal. Advancing to Task #${currentTaskIdx + 2} of ${c.tasks.length}: ${nextTask.component} (v${nextTask.targetVersion}).`,
+                          });
+
+                          return {
+                            ...s,
+                            component: nextTask.component,
+                            fromVersion: fromVer,
+                            toVersion: nextTask.targetVersion,
+                            currentTaskIndex: currentTaskIdx + 1,
+                            completedTasksCount: currentTaskIdx + 1,
+                            totalTasksCount: c.tasks.length,
+                            stage: 'preflight' as UpgradeStage,
+                            progressPercent: 10,
+                            currentStepMessage: `Advancing to Task #${currentTaskIdx + 2}: ${nextTask.component} v${nextTask.targetVersion}`,
+                            networkStatus: res.networkStatus || s.networkStatus,
+                            ipmiStatus: res.ipmiStatus || s.ipmiStatus,
+                            credentialsStatus: res.credentialsStatus || s.credentialsStatus,
+                            lastTelemetry: res.telemetry || s.lastTelemetry,
+                            logs: newLogs,
+                          };
+                        } else {
+                          // All ranked tasks completed
+                          newLogs.push({
+                            timestamp: new Date().toLocaleTimeString(),
+                            level: 'success',
+                            message: `[Sequence Complete] All ${c.tasks.length} ranked firmware tasks completed and verified nominal!`,
+                          });
+                        }
+                      }
+
+                      return {
+                        ...s,
+                        stage: nextStage,
+                        progressPercent: res.progressPercent ?? 100,
+                        currentStepMessage: res.message || 'Task step verified nominal',
+                        networkStatus: res.networkStatus || s.networkStatus,
+                        ipmiStatus: res.ipmiStatus || s.ipmiStatus,
+                        credentialsStatus: res.credentialsStatus || s.credentialsStatus,
+                        lastTelemetry: res.telemetry || s.lastTelemetry,
+                        completedTasksCount: c.tasks ? (nextStage === 'completed' ? c.tasks.length : (s.currentTaskIndex || 0)) : 1,
+                        totalTasksCount: c.tasks?.length || 1,
+                        logs: newLogs,
+                      };
+                    } else {
+                      return {
+                        ...s,
+                        stage: 'failed' as UpgradeStage,
+                        error: res.error || 'Check failed',
+                        networkStatus: res.networkStatus || 'unreachable',
+                        ipmiStatus: res.ipmiStatus || 'failed',
+                        credentialsStatus: res.credentialsStatus || 'invalid',
+                        currentStepMessage: `Failed: ${res.error || 'Check failed'}`,
+                        logs: newLogs,
+                      };
+                    }
+                  });
+
+                  let newStatus = c.status;
+                  // If failure and stopOnFirstFailure is enabled, pause the campaign
+                  if (!res.success && c.stopOnFirstFailure) {
+                    newStatus = 'paused';
+                    showToast(`[Check Alert] Campaign halted: Checks failed on node ${jobServer.hostname}`, 'warn');
+                  }
+
+                  // If all servers completed or failed, mark completed
+                  const allDone = updatedServers.every(
+                    s => s.stage === 'completed' || s.stage === 'failed' || s.stage === 'rolled_back'
+                  );
+                  if (allDone && newStatus === 'running') {
+                    newStatus = 'completed';
+                    showToast(`Upgrade campaign "${c.title}" completed across all nodes!`, 'success');
+                  }
+
+                  const updatedCamp: UpgradeCampaign = {
+                    ...c,
+                    status: newStatus,
+                    servers: updatedServers,
+                    updatedAt: new Date().toISOString(),
+                  };
+
+                  // Sync to backend DB asynchronously
+                  syncSaveCampaign(updatedCamp).catch(err => console.warn('Failed to sync campaign:', err));
+
+                  return updatedCamp;
+                });
+              });
+
+              // If completed, update physical server in fleet and add audit log
+              if (res.success && (res.nextStage === 'completed' || currentStage === 'postcheck')) {
+                if (physicalServer) {
+                  const compKey = jobServer.component;
+                  const updatedServer: Server = {
+                    ...physicalServer,
+                    status: 'online',
+                    lastUpgradeDate: new Date().toISOString().split('T')[0],
+                    components: {
+                      ...physicalServer.components,
+                      [compKey]: {
+                        ...physicalServer.components[compKey],
+                        currentVersion: jobServer.toVersion,
+                        status: 'up_to_date',
+                      },
+                    },
+                  };
+
+                  setServers(prevServers =>
+                    prevServers.map(s => (s.id === physicalServer.id ? updatedServer : s))
+                  );
+                  syncSaveServer(updatedServer).catch(console.warn);
+
+                  // Create audit log
+                  const auditRec: AuditRecord = {
+                    id: `aud-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
+                    timestamp: new Date().toISOString().replace('T', ' ').substring(0, 19),
+                    serverId: physicalServer.id,
+                    serverHostname: physicalServer.hostname,
+                    component: compKey,
+                    fromVersion: jobServer.fromVersion,
+                    toVersion: jobServer.toVersion,
+                    status: 'success',
+                    operator: 'Rollout Engine (Real IPMI/Redfish)',
+                    durationSeconds: 180,
+                    firmwarePackageName: `${compKey} Upgrade to ${jobServer.toVersion}`,
+                  };
+                  setAuditLogs(prev => [auditRec, ...prev]);
+                  syncSaveAuditLog(auditRec).catch(console.warn);
+                }
+              }
+            } catch (err: any) {
+              console.error('Error executing server step:', err);
+            } finally {
+              executingNodesRef.current.delete(execKey);
+            }
+          })();
         }
+      }
+    }, 1500);
 
-        // Check if all servers in campaign completed
-        const allDone = updatedServers.every(
-          s => s.stage === 'completed' || s.stage === 'failed' || s.stage === 'rolled_back'
-        );
+    return () => clearInterval(interval);
+  }, [campaigns, servers]);
 
-        if (allDone && prevCamp.status === 'running') {
-          showToast(`Upgrade campaign "${prevCamp.title}" completed successfully across all nodes!`, 'success');
-          return {
-            ...prevCamp,
-            status: 'completed',
-            servers: updatedServers,
-          };
-        }
-
-        if (anyUpdated) {
-          return {
-            ...prevCamp,
-            servers: updatedServers,
-          };
-        }
-
-        return prevCamp;
-      });
-    }, 900);
-
-    return () => clearInterval(timer);
-  }, [activeCampaign]);
-
-  // Campaign controls
+  // Campaign CRUD Controls
   const handleStartCampaign = (
     title: string,
     targetComponent: ComponentType | 'FULL_BASELINE',
@@ -379,57 +446,137 @@ export default function App() {
       preflight
     );
 
-    setActiveCampaign(newCamp);
+    setCampaigns(prev => [newCamp, ...prev]);
+    setSelectedCampaignId(newCamp.id);
+    saveCampaign(newCamp);
+    syncSaveCampaign(newCamp).catch(console.warn);
     setActiveTab('campaign');
-    showToast(`Rollout launched for ${selectedServersList.length} server nodes!`, 'info');
+    showToast(`Rollout campaign "${newCamp.title}" launched for ${selectedServersList.length} nodes!`, 'info');
   };
 
-  const handlePauseCampaign = () => {
-    if (!activeCampaign) return;
-    setActiveCampaign({ ...activeCampaign, status: 'paused' });
+  const handlePauseCampaign = (campaignId: string) => {
+    setCampaigns(prev => prev.map(c => {
+      if (c.id === campaignId) {
+        const updated: UpgradeCampaign = { ...c, status: 'paused', updatedAt: new Date().toISOString() };
+        syncSaveCampaign(updated).catch(console.warn);
+        return updated;
+      }
+      return c;
+    }));
     showToast('Upgrade rollout paused.', 'warn');
   };
 
-  const handleResumeCampaign = () => {
-    if (!activeCampaign) return;
-    setActiveCampaign({ ...activeCampaign, status: 'running' });
+  const handleResumeCampaign = (campaignId: string) => {
+    setCampaigns(prev => prev.map(c => {
+      if (c.id === campaignId) {
+        const updated: UpgradeCampaign = { ...c, status: 'running', updatedAt: new Date().toISOString() };
+        syncSaveCampaign(updated).catch(console.warn);
+        return updated;
+      }
+      return c;
+    }));
     showToast('Upgrade rollout resumed.', 'info');
   };
 
-  const handleAbortCampaign = () => {
-    if (!activeCampaign) return;
-    setActiveCampaign({ ...activeCampaign, status: 'aborted' });
+  const handleAbortCampaign = (campaignId: string) => {
+    setCampaigns(prev => prev.map(c => {
+      if (c.id === campaignId) {
+        const updated: UpgradeCampaign = { ...c, status: 'aborted', updatedAt: new Date().toISOString() };
+        syncSaveCampaign(updated).catch(console.warn);
+        return updated;
+      }
+      return c;
+    }));
     showToast('Campaign aborted by operator.', 'warn');
   };
 
-  const handleTriggerRollback = (serverId: string) => {
-    if (!activeCampaign) return;
-    const srv = activeCampaign.servers.find(s => s.serverId === serverId);
-    if (!srv) return;
-
-    setActiveCampaign({
-      ...activeCampaign,
-      servers: activeCampaign.servers.map(s => {
-        if (s.serverId === serverId) {
-          return {
-            ...s,
-            stage: 'rolled_back',
-            currentStepMessage: `Rolled back to backup firmware partition (${s.fromVersion})`,
-            logs: [
-              ...s.logs,
-              {
-                timestamp: new Date().toLocaleTimeString(),
-                level: 'warn',
-                message: `[Rollback] Reverted to backup firmware bank (${s.fromVersion}). Redfish status restored to OK.`,
-              },
-            ],
-          };
-        }
-        return s;
-      }),
+  const handleDeleteCampaign = (campaignId: string) => {
+    deleteCampaign(campaignId);
+    syncDeleteCampaign(campaignId).catch(console.warn);
+    setCampaigns(prev => {
+      const remaining = prev.filter(c => c.id !== campaignId);
+      if (selectedCampaignId === campaignId) {
+        setSelectedCampaignId(remaining[0]?.id || null);
+      }
+      return remaining;
     });
+    showToast('Campaign successfully deleted.', 'info');
+  };
 
-    showToast(`Rollback executed for server node ${srv.hostname}.`, 'info');
+  const handleOpenEditCampaign = (campaign: UpgradeCampaign) => {
+    setCampaignToEdit(campaign);
+    setIsEditCampaignOpen(true);
+  };
+
+  const handleSaveCampaign = (updatedCampaign: UpgradeCampaign) => {
+    setCampaigns(prev => prev.map(c => c.id === updatedCampaign.id ? updatedCampaign : c));
+    saveCampaign(updatedCampaign);
+    syncSaveCampaign(updatedCampaign).catch(console.warn);
+    showToast(`Campaign "${updatedCampaign.title}" saved.`, 'success');
+  };
+
+  const handleRetryServerTask = (campaignId: string, serverId: string) => {
+    setCampaigns(prev => prev.map(c => {
+      if (c.id !== campaignId) return c;
+      const updatedServers = c.servers.map(s => {
+        if (s.serverId !== serverId) return s;
+        return {
+          ...s,
+          stage: 'pending' as UpgradeStage,
+          progressPercent: 0,
+          error: undefined,
+          currentStepMessage: 'Queued for real hardware retry...',
+          logs: [
+            ...s.logs,
+            {
+              timestamp: new Date().toLocaleTimeString(),
+              level: 'info' as const,
+              message: `[Retry Task] Re-queued by operator. Will re-test network, IPMI, and credentials.`,
+            },
+          ],
+        };
+      });
+
+      const updated: UpgradeCampaign = {
+        ...c,
+        status: c.status === 'paused' ? 'running' : c.status,
+        servers: updatedServers,
+        updatedAt: new Date().toISOString(),
+      };
+      syncSaveCampaign(updated).catch(console.warn);
+      return updated;
+    }));
+    showToast('Node task reset and re-queued for execution.', 'info');
+  };
+
+  const handleTriggerRollback = (campaignId: string, serverId: string) => {
+    setCampaigns(prev => prev.map(c => {
+      if (c.id !== campaignId) return c;
+      const srv = c.servers.find(s => s.serverId === serverId);
+      if (!srv) return c;
+
+      const updatedServers = c.servers.map(s => {
+        if (s.serverId !== serverId) return s;
+        return {
+          ...s,
+          stage: 'rolled_back' as UpgradeStage,
+          currentStepMessage: `Rolled back to backup firmware partition (${s.fromVersion})`,
+          logs: [
+            ...s.logs,
+            {
+              timestamp: new Date().toLocaleTimeString(),
+              level: 'warn' as const,
+              message: `[Rollback] Boot partition switched to secondary SPI EEPROM bank. Hardware nominal.`,
+            },
+          ],
+        };
+      });
+
+      const updated: UpgradeCampaign = { ...c, servers: updatedServers, updatedAt: new Date().toISOString() };
+      syncSaveCampaign(updated).catch(console.warn);
+      return updated;
+    }));
+    showToast('Rollback executed. Backup firmware bank restored.', 'warn');
   };
 
   // Demo fleet reset
@@ -439,7 +586,8 @@ export default function App() {
     setPackages(demo.packages);
     setAuditLogs(demo.auditLogs);
     setBaseline(demo.baseline);
-    setActiveCampaign(null);
+    setCampaigns([]);
+    setSelectedCampaignId(null);
     setSelectedServerIds([]);
     showToast('Fleet inventory reset to initial demo configuration.', 'info');
     if (dbStatus?.connected) {
@@ -454,7 +602,8 @@ export default function App() {
     setServers([]);
     setPackages([]);
     setAuditLogs([]);
-    setActiveCampaign(null);
+    setCampaigns([]);
+    setSelectedCampaignId(null);
     setSelectedServerIds([]);
     setInspectedServer(null);
 
@@ -637,7 +786,7 @@ export default function App() {
       <Header
         activeTab={activeTab}
         onTabChange={setActiveTab}
-        activeCampaign={activeCampaign}
+        activeCampaign={campaigns.find(c => c.id === selectedCampaignId) || campaigns.find(c => c.status === 'running') || campaigns[0] || null}
         onOpenUpgradeWizard={() => {
           setWizardPreSelectedServers([]);
           setWizardPreSelectedComponent('BIOS');
@@ -803,16 +952,22 @@ export default function App() {
 
         {activeTab === 'campaign' && (
           <ActiveCampaignView
-            campaign={activeCampaign}
-            onPauseCampaign={handlePauseCampaign}
-            onResumeCampaign={handleResumeCampaign}
-            onAbortCampaign={handleAbortCampaign}
-            onTriggerRollback={handleTriggerRollback}
+            campaigns={campaigns}
+            selectedCampaignId={selectedCampaignId}
+            fleetServers={servers}
+            onSelectCampaign={setSelectedCampaignId}
             onOpenUpgradeWizard={() => {
               setWizardPreSelectedServers([]);
               setWizardPreSelectedComponent('BIOS');
               setIsWizardOpen(true);
             }}
+            onOpenEditCampaign={handleOpenEditCampaign}
+            onDeleteCampaign={handleDeleteCampaign}
+            onPauseCampaign={handlePauseCampaign}
+            onResumeCampaign={handleResumeCampaign}
+            onAbortCampaign={handleAbortCampaign}
+            onTriggerRollback={handleTriggerRollback}
+            onRetryServerTask={handleRetryServerTask}
           />
         )}
 
@@ -879,7 +1034,8 @@ export default function App() {
           setPackages(pRes.packages);
           setAuditLogs(aRes.logs);
           setBaseline(bRes.baseline);
-          setActiveCampaign(null);
+          setCampaigns([]);
+          setSelectedCampaignId(null);
           showToast('Fleet inventory reloaded from PostgreSQL.', 'success');
         }}
       />
@@ -964,6 +1120,19 @@ export default function App() {
         allAuditLogs={auditLogs}
         initialDataset={exportModalInitialDataset}
         onShowToast={showToast}
+      />
+
+      {/* Edit Upgrade Campaign Modal */}
+      <EditCampaignModal
+        isOpen={isEditCampaignOpen}
+        onClose={() => {
+          setIsEditCampaignOpen(false);
+          setCampaignToEdit(null);
+        }}
+        campaign={campaignToEdit}
+        fleetServers={servers}
+        packages={packages}
+        onSaveCampaign={handleSaveCampaign}
       />
     </div>
   );

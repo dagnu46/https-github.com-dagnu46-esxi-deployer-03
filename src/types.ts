@@ -218,6 +218,18 @@ export interface ServerStorageFile {
   folder: 'firmware' | 'datastores';
 }
 
+export interface CampaignFirmwareTask {
+  id: string;
+  order: number; // 1, 2, 3...
+  component: ComponentType;
+  packageId?: string;
+  targetFirmwareId?: string;
+  packageName?: string;
+  targetVersion: string;
+  rebootRequired?: boolean;
+  notes?: string;
+}
+
 export interface UpgradeJobServerProgress {
   serverId: string;
   hostname: string;
@@ -227,18 +239,34 @@ export interface UpgradeJobServerProgress {
   stage: UpgradeStage;
   progressPercent: number;
   currentStepMessage: string;
+  currentTaskIndex?: number;
+  completedTasksCount?: number;
+  totalTasksCount?: number;
   startedAt?: string;
   completedAt?: string;
   error?: string;
+  networkStatus?: 'reachable' | 'unreachable' | 'untested';
+  ipmiStatus?: 'verified' | 'failed' | 'untested';
+  credentialsStatus?: 'valid' | 'invalid' | 'untested';
+  lastTelemetry?: {
+    powerState?: string;
+    psuRedundant?: boolean;
+    bmcVersion?: string;
+    latencyMs?: number;
+    checkedAt?: string;
+  };
   logs: Array<{ timestamp: string; level: 'info' | 'warn' | 'error' | 'success'; message: string }>;
 }
 
 export interface UpgradeCampaign {
   id: string;
   title: string;
+  description?: string;
   createdAt: string;
+  updatedAt?: string;
   targetComponent: ComponentType | 'FULL_BASELINE';
   targetFirmwareId?: string;
+  tasks?: CampaignFirmwareTask[]; // Ranked ordered firmware tasks
   status: 'running' | 'paused' | 'completed' | 'failed' | 'aborted';
   concurrencyLimit: number; // e.g., 2 servers at a time
   autoReboot: boolean;

@@ -66,24 +66,9 @@ export const Header: React.FC<HeaderProps> = ({
             <div>
               <div className="flex items-center space-x-2.5">
                 <h1 className="text-lg font-bold text-slate-900 tracking-tight">Server Firmware Manager</h1>
-                <span className="text-[11px] font-semibold tracking-wide uppercase px-2 py-0.5 rounded-full bg-slate-100 text-slate-700 border border-slate-200">
-                  Redfish v1.17
-                </span>
               </div>
-              <p className="text-xs text-slate-500 flex items-center gap-2">
-                <span>Fleet: <strong>{totalServers}</strong> servers managed</span>
-                <span>•</span>
-                {criticalCount > 0 ? (
-                  <span className="text-amber-600 font-medium flex items-center gap-1">
-                    <AlertTriangle className="w-3 h-3" />
-                    {criticalCount} require critical security patches
-                  </span>
-                ) : (
-                  <span className="text-emerald-600 font-medium flex items-center gap-1">
-                    <CheckCircle2 className="w-3 h-3" />
-                    All nodes compliant
-                  </span>
-                )}
+              <p className="text-xs text-slate-500">
+                Enterprise BMC, Redfish & IPMI Orchestration Platform
               </p>
             </div>
           </div>
