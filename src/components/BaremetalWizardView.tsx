@@ -33,7 +33,9 @@ import {
   X,
   XCircle,
   Key,
-  ShieldAlert
+  ShieldAlert,
+  AlertCircle,
+  Sparkles
 } from 'lucide-react';
 import {
   BaremetalVendor,
@@ -57,12 +59,12 @@ import {
 } from '../services/esxiIsoService';
 import { testServerAccess } from '../utils/accessTester';
 import { BaremetalWorkflowVisualizer } from './BaremetalWorkflowVisualizer';
-import { ServiceNowInspector } from './ServiceNowInspector';
 import { ServiceNowCredentialsPromptModal } from './ServiceNowCredentialsPromptModal';
 import {
   fetchDatabaseServiceNowCredentials,
   saveDatabaseServiceNowCredentials,
-  testServiceNowConnection
+  testServiceNowConnection,
+  fetchServiceNowRitm
 } from '../services/servicenowService';
 import { logBaremetalOutput } from '../services/baremetalOutputLogger';
 
@@ -270,6 +272,94 @@ export const BaremetalWizardView: React.FC<BaremetalWizardViewProps> = ({
         message: err.message || 'Connection test failed'
       });
       logBaremetalOutput('SERVICENOW', 'error', `Connection test error: ${err.message}`);
+    } finally {
+      setIsTestingCreds(false);
+    }
+  };
+
+  // RITM Fetcher state (Real ServiceNow API - Nothing in Sandbox)
+  const [isFetchingRitm, setIsFetchingRitm] = useState(false);
+  const [ritmFetchError, setRitmFetchError] = useState<string | null>(null);
+  const [retrievedRitmData, setRetrievedRitmData] = useState<ServiceNowRitmData | null>(null);
+
+  const handleGetInfoFromServiceNow = async () => {
+    const cleanRitm = ritmNumber.trim().toUpperCase();
+    if (!cleanRitm) {
+      setRitmFetchError('Please enter an RITM number in the field above (e.g. RITM0012345).');
+      return;
+    }
+
+    setIsFetchingRitm(true);
+    setRitmFetchError(null);
+    logBaremetalOutput(
+      'SERVICENOW',
+      'info',
+      `Querying ServiceNow Table API for ticket [${cleanRitm}]...`,
+      `Target: ${credInstanceUrl} | Login: ${credUsername || 'anonymous'}`
+    );
+
+    try {
+      const data = await fetchServiceNowRitm(cleanRitm, {
+        instanceUrl: credInstanceUrl.trim(),
+        username: credUsername.trim(),
+        password: credPassword
+      });
+
+      setRetrievedRitmData(data);
+      handleApplyServiceNowFields(data.extractedFields, data);
+
+      logBaremetalOutput(
+        'SERVICENOW',
+        'success',
+        `Real ServiceNow Ticket Retrieved: ${data.number}`,
+        `State: ${data.state} | Requester: ${data.requester} | Host: ${data.extractedFields?.hostname || 'N/A'} | Management IP: ${data.extractedFields?.managementIp || 'N/A'}`
+      );
+    } catch (err: any) {
+      setRetrievedRitmData(null);
+      const msg = err.message || 'Failed to retrieve information from ServiceNow';
+      setRitmFetchError(msg);
+      logBaremetalOutput(
+        'SERVICENOW',
+        'error',
+        `ServiceNow Query Failed for [${cleanRitm}]`,
+        msg
+      );
+    } finally {
+      setIsFetchingRitm(false);
+    }
+  };
+
+  const handleRealTestConnection = async () => {
+    setIsTestingCreds(true);
+    setCredTestFeedback(null);
+    logBaremetalOutput(
+      'SERVICENOW',
+      'info',
+      `Executing real test connection to ${credInstanceUrl}...`,
+      `Login: ${credUsername || 'anonymous'}`
+    );
+    try {
+      const res = await testServiceNowConnection({
+        instanceUrl: credInstanceUrl.trim(),
+        username: credUsername.trim(),
+        password: credPassword
+      });
+      setCredTestFeedback({
+        success: res.success,
+        message: res.message + (res.latencyMs ? ` (${res.latencyMs}ms)` : '')
+      });
+      logBaremetalOutput(
+        'SERVICENOW',
+        res.success ? 'success' : 'warn',
+        res.message,
+        `Latency: ${res.latencyMs || 0}ms | Instance: ${res.instanceUrl}`
+      );
+    } catch (err: any) {
+      setCredTestFeedback({
+        success: false,
+        message: err.message || 'Real connection test failed'
+      });
+      logBaremetalOutput('SERVICENOW', 'error', `Real connection test error: ${err.message}`);
     } finally {
       setIsTestingCreds(false);
     }
@@ -693,30 +783,32 @@ export const BaremetalWizardView: React.FC<BaremetalWizardViewProps> = ({
                 </p>
               </div>
 
-              {/* SERVICENOW ACCESS CREDENTIALS & DATABASE PERSISTENCE PROMPT */}
-              <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 rounded-xl border border-indigo-500/30 p-4 text-white shadow-xs space-y-3">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              {/* RITM fetcher (Real ServiceNow API Integration) */}
+              <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 rounded-xl border border-indigo-500/30 p-5 text-white shadow-md space-y-4">
+                {/* Header */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-indigo-500/20 pb-3">
                   <div className="flex items-center gap-3">
                     <div className="p-2.5 rounded-lg bg-indigo-500/20 border border-indigo-400/30 text-indigo-300">
-                      <Key className="w-4 h-4" />
+                      <Search className="w-5 h-5" />
                     </div>
                     <div>
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-bold text-sm text-white">ServiceNow API Credentials</span>
+                        <span className="font-bold text-base text-white">RITM fetcher</span>
+                        <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-400/30 font-mono font-medium">
+                          Real ServiceNow Table API
+                        </span>
                         {dbCredentials?.storedInDb ? (
                           <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-400/40 font-mono font-medium">
-                            <Database className="w-3 h-3" /> Stored in PostgreSQL (app_settings)
+                            <Database className="w-3 h-3" /> Stored in DB (app_settings)
                           </span>
                         ) : (
                           <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-400/40 font-mono font-medium">
-                            <ShieldAlert className="w-3 h-3" /> Credentials Needed for RITM API
+                            <ShieldAlert className="w-3 h-3" /> Not yet in DB
                           </span>
                         )}
                       </div>
-                      <p className="text-[11px] text-slate-300 mt-0.5">
-                        {dbCredentials?.storedInDb
-                          ? `Instance: ${dbCredentials.instanceUrl.replace(/^https?:\/\//, '')} | User: ${dbCredentials.username || 'svc_account'}`
-                          : 'Prompt and store your ServiceNow credentials securely in the database for automated ticket parameter resolution'}
+                      <p className="text-xs text-slate-300 mt-0.5">
+                        Fetch live ServiceNow Request Item authorization, extract host configuration parameters, and run real connection checks.
                       </p>
                     </div>
                   </div>
@@ -726,154 +818,282 @@ export const BaremetalWizardView: React.FC<BaremetalWizardViewProps> = ({
                       type="button"
                       id="btn-prompt-credentials-modal"
                       onClick={() => setShowCredentialsModal(true)}
-                      className="px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold flex items-center gap-1.5 shadow-xs transition-colors cursor-pointer"
+                      className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-medium border border-slate-700 transition-colors flex items-center gap-1.5 cursor-pointer"
+                      title="Manage database credentials & instance endpoint"
                     >
-                      <Key className="w-3.5 h-3.5" />
-                      <span>{dbCredentials?.storedInDb ? 'Manage Credentials' : 'Prompt Credentials'}</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setShowInlineCreds(!showInlineCreds)}
-                      className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium border border-slate-700 transition-colors cursor-pointer"
-                    >
-                      {showInlineCreds ? 'Close Quick Form' : 'Quick Configure'}
+                      <Key className="w-3.5 h-3.5 text-indigo-400" />
+                      <span>DB Config</span>
                     </button>
                   </div>
                 </div>
 
-                {/* Inline Credentials Prompt & Database Storage Form */}
-                {showInlineCreds && (
-                  <div className="pt-3 border-t border-slate-800 space-y-3 animate-in fade-in duration-150">
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                      <div>
-                        <label className="block text-[11px] text-slate-300 font-medium mb-1">
-                          ServiceNow Instance URL
-                        </label>
-                        <input
-                          type="text"
-                          id="input-inline-sn-url"
-                          value={credInstanceUrl}
-                          onChange={e => setCredInstanceUrl(e.target.value)}
-                          placeholder="https://generali.service-now.com"
-                          className="w-full text-xs font-mono rounded bg-slate-800/90 border border-slate-700 p-2 text-white placeholder-slate-500 focus:ring-1 focus:ring-indigo-400"
-                        />
+                {/* The 3 requested fields: RITM number, login and password */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
+                  {/* Field 1: RITM number */}
+                  <div>
+                    <label className="block text-xs font-bold text-slate-200 mb-1.5 flex items-center justify-between">
+                      <span className="flex items-center gap-1.5">
+                        <FileText className="w-3.5 h-3.5 text-indigo-400" />
+                        <span>RITM number</span>
+                      </span>
+                      <span className="text-[10px] font-semibold text-indigo-400 uppercase tracking-wider">Required</span>
+                    </label>
+                    <div className="relative">
+                      <input
+                        type="text"
+                        id="input-ritm-number"
+                        value={ritmNumber}
+                        onChange={e => {
+                          setRitmNumber(e.target.value.toUpperCase());
+                          if (ritmFetchError) setRitmFetchError(null);
+                        }}
+                        placeholder="e.g. RITM0012345"
+                        className="w-full text-sm font-mono font-bold rounded-lg bg-slate-800/95 border border-slate-700 p-2.5 pl-3 pr-8 text-white placeholder-slate-500 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-400"
+                      />
+                      {ritmNumber.trim().length > 3 && (
+                        <span className="absolute right-2.5 top-3 text-emerald-400">
+                          <Check className="w-4 h-4 stroke-[2.5]" />
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Field 2: login */}
+                  <div>
+                    <label className="block text-xs font-bold text-slate-200 mb-1.5 flex items-center justify-between">
+                      <span className="flex items-center gap-1.5">
+                        <Server className="w-3.5 h-3.5 text-indigo-400" />
+                        <span>Login</span>
+                      </span>
+                      <span className="text-[10px] font-mono text-slate-400">Username</span>
+                    </label>
+                    <input
+                      type="text"
+                      id="input-ritm-fetcher-login"
+                      value={credUsername}
+                      onChange={e => setCredUsername(e.target.value)}
+                      placeholder="ServiceNow username / svc account"
+                      className="w-full text-xs font-mono rounded-lg bg-slate-800/95 border border-slate-700 p-2.5 text-white placeholder-slate-500 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-400"
+                    />
+                  </div>
+
+                  {/* Field 3: password */}
+                  <div>
+                    <label className="block text-xs font-bold text-slate-200 mb-1.5 flex items-center justify-between">
+                      <span className="flex items-center gap-1.5">
+                        <Lock className="w-3.5 h-3.5 text-indigo-400" />
+                        <span>Password</span>
+                      </span>
+                      <span className="text-[10px] font-mono text-slate-400">Secret / Token</span>
+                    </label>
+                    <div className="relative">
+                      <input
+                        type={showCredPassword ? 'text' : 'password'}
+                        id="input-ritm-fetcher-password"
+                        value={credPassword}
+                        onChange={e => setCredPassword(e.target.value)}
+                        placeholder="Enter password..."
+                        className="w-full text-xs font-mono rounded-lg bg-slate-800/95 border border-slate-700 p-2.5 pr-9 text-white placeholder-slate-500 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-400"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowCredPassword(!showCredPassword)}
+                        className="absolute right-2.5 top-3 text-slate-400 hover:text-white transition-colors cursor-pointer"
+                        title={showCredPassword ? 'Hide password' : 'Show password'}
+                      >
+                        {showCredPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Instance URL quick reference */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-[11px] text-slate-400 pt-1">
+                  <div className="flex items-center gap-2">
+                    <Globe className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+                    <span>Instance Endpoint:</span>
+                    <input
+                      type="text"
+                      value={credInstanceUrl}
+                      onChange={e => setCredInstanceUrl(e.target.value)}
+                      placeholder="https://generali.service-now.com"
+                      className="text-xs font-mono bg-slate-800/90 border border-slate-700 rounded px-2 py-1 text-slate-200 focus:ring-1 focus:ring-indigo-400 w-64"
+                    />
+                  </div>
+                  <span className="text-[10px] text-slate-400 italic">
+                    Strict real mode: directly calls ServiceNow Table API (sc_req_item / sc_item_option_mtom).
+                  </span>
+                </div>
+
+                {/* Action Buttons: Get informations from ServiceNow & Real Test Connection & Store into DB */}
+                <div className="flex flex-wrap items-center justify-between gap-2.5 pt-2 border-t border-slate-800">
+                  <div className="flex flex-wrap items-center gap-2.5">
+                    {/* BUTTON 1: Get informations from ServiceNow */}
+                    <button
+                      type="button"
+                      id="btn-get-info-servicenow"
+                      onClick={handleGetInfoFromServiceNow}
+                      disabled={isFetchingRitm || !ritmNumber.trim()}
+                      className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white font-bold text-xs flex items-center gap-2 shadow-xs transition-colors disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                    >
+                      {isFetchingRitm ? (
+                        <RefreshCw className="w-4 h-4 animate-spin text-white" />
+                      ) : (
+                        <Sparkles className="w-4 h-4 text-indigo-200" />
+                      )}
+                      <span>{isFetchingRitm ? 'Fetching from ServiceNow...' : 'Get informations from ServiceNow'}</span>
+                    </button>
+
+                    {/* BUTTON 2: Real Test Connection */}
+                    <button
+                      type="button"
+                      id="btn-real-test-connection"
+                      onClick={handleRealTestConnection}
+                      disabled={isTestingCreds}
+                      className="px-3.5 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 active:bg-slate-900 text-slate-200 font-semibold text-xs flex items-center gap-1.5 border border-slate-700 shadow-xs transition-colors disabled:opacity-50 cursor-pointer"
+                    >
+                      {isTestingCreds ? (
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin text-indigo-400" />
+                      ) : (
+                        <ShieldCheck className="w-3.5 h-3.5 text-indigo-400" />
+                      )}
+                      <span>{isTestingCreds ? 'Testing Real Connection...' : 'Real Test Connection'}</span>
+                    </button>
+
+                    {/* Button 3: Store credentials into DB */}
+                    <button
+                      type="button"
+                      id="btn-inline-save-database"
+                      onClick={handleSaveInlineCreds}
+                      disabled={isSavingCreds}
+                      className="px-3 py-2 rounded-lg bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white font-medium text-xs flex items-center gap-1.5 border border-slate-700/80 transition-colors disabled:opacity-50 cursor-pointer"
+                      title="Persist login and password into PostgreSQL app_settings"
+                    >
+                      {isSavingCreds ? (
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin text-slate-400" />
+                      ) : (
+                        <Database className="w-3.5 h-3.5 text-slate-400" />
+                      )}
+                      <span>{isSavingCreds ? 'Saving to DB...' : 'Store credentials into Database'}</span>
+                    </button>
+                  </div>
+
+                  {/* Real test connection feedback status */}
+                  {credTestFeedback && (
+                    <div className={`text-xs font-semibold flex items-center gap-1.5 px-3 py-1.5 rounded-lg border ${
+                      credTestFeedback.success
+                        ? 'bg-emerald-950/60 border-emerald-500/40 text-emerald-300'
+                        : 'bg-red-950/60 border-red-500/40 text-red-300'
+                    }`}>
+                      {credTestFeedback.success ? (
+                        <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400" />
+                      ) : (
+                        <AlertCircle className="w-4 h-4 shrink-0 text-red-400" />
+                      )}
+                      <span>{credTestFeedback.message}</span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Real Fetch Error Alert (No sandbox fallback!) */}
+                {ritmFetchError && (
+                  <div className="p-3.5 rounded-xl bg-red-950/70 border border-red-500/50 text-red-200 text-xs flex items-start gap-3 animate-in fade-in duration-150">
+                    <AlertCircle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <strong className="text-red-300 font-bold">Real ServiceNow Request Failed:</strong>
+                        <span className="text-[10px] px-2 py-0.5 rounded bg-red-900/60 text-red-200 font-mono">
+                          NO SANDBOX FALLBACK
+                        </span>
                       </div>
-                      <div>
-                        <label className="block text-[11px] text-slate-300 font-medium mb-1">
-                          Service Account Username
-                        </label>
-                        <input
-                          type="text"
-                          id="input-inline-sn-user"
-                          value={credUsername}
-                          onChange={e => setCredUsername(e.target.value)}
-                          placeholder="svc_vcenter_baremetal"
-                          className="w-full text-xs font-mono rounded bg-slate-800/90 border border-slate-700 p-2 text-white placeholder-slate-500 focus:ring-1 focus:ring-indigo-400"
-                        />
+                      <p className="text-red-200/90 font-mono text-[11px] break-all">{ritmFetchError}</p>
+                      <p className="text-[11px] text-red-300/80">
+                        Check that your instance URL is reachable, login and password are valid, and ticket exists in ServiceNow.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Real Ticket Results Display (when fetched from ServiceNow) */}
+                {retrievedRitmData && (
+                  <div className="p-4 rounded-xl bg-slate-800/95 border border-emerald-500/40 text-white space-y-3 animate-in fade-in duration-150">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-700/80 pb-2.5">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-xs text-slate-400 font-semibold uppercase tracking-wider">
+                          Real ServiceNow Ticket:
+                        </span>
+                        <span className="text-sm font-mono font-bold text-emerald-400 bg-emerald-950/60 px-2 py-0.5 rounded border border-emerald-500/30">
+                          {retrievedRitmData.number}
+                        </span>
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-slate-700 font-medium text-slate-200">
+                          State: {retrievedRitmData.state}
+                        </span>
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-900/60 text-indigo-300 border border-indigo-700/50">
+                          Stage: {retrievedRitmData.stage}
+                        </span>
                       </div>
-                      <div>
-                        <label className="block text-[11px] text-slate-300 font-medium mb-1">
-                          Account Password / Token
-                        </label>
-                        <div className="relative">
-                          <input
-                            type={showCredPassword ? 'text' : 'password'}
-                            id="input-inline-sn-password"
-                            value={credPassword}
-                            onChange={e => setCredPassword(e.target.value)}
-                            placeholder="Enter password..."
-                            className="w-full text-xs font-mono rounded bg-slate-800/90 border border-slate-700 p-2 pr-8 text-white placeholder-slate-500 focus:ring-1 focus:ring-indigo-400"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => setShowCredPassword(!showCredPassword)}
-                            className="absolute right-2 top-2 text-slate-400 hover:text-white"
-                          >
-                            {showCredPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                          </button>
-                        </div>
+
+                      <span className="text-[11px] text-emerald-300 flex items-center gap-1 font-semibold">
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        Live Table API Result Loaded
+                      </span>
+                    </div>
+
+                    <div className="text-xs text-slate-200">
+                      <strong className="text-white">Short Description: </strong>
+                      {retrievedRitmData.shortDescription}
+                    </div>
+
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 text-xs">
+                      <div className="p-2 rounded bg-slate-900/60 border border-slate-700/60">
+                        <span className="text-[10px] text-slate-400 block">Requester</span>
+                        <span className="font-semibold text-slate-200 truncate block">
+                          {retrievedRitmData.requester || 'N/A'}
+                        </span>
+                      </div>
+                      <div className="p-2 rounded bg-slate-900/60 border border-slate-700/60">
+                        <span className="text-[10px] text-slate-400 block">Host FQDN</span>
+                        <span className="font-mono text-slate-200 truncate block">
+                          {retrievedRitmData.extractedFields.hostname || 'Not set'}
+                        </span>
+                      </div>
+                      <div className="p-2 rounded bg-slate-900/60 border border-slate-700/60">
+                        <span className="text-[10px] text-slate-400 block">Management IP</span>
+                        <span className="font-mono text-slate-200 truncate block">
+                          {retrievedRitmData.extractedFields.managementIp || 'Not set'}
+                        </span>
+                      </div>
+                      <div className="p-2 rounded bg-slate-900/60 border border-slate-700/60">
+                        <span className="text-[10px] text-slate-400 block">IPMI / BMC IP</span>
+                        <span className="font-mono text-slate-200 truncate block">
+                          {retrievedRitmData.extractedFields.ipmiAddress || 'Not set'}
+                        </span>
                       </div>
                     </div>
 
-                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-1">
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          id="btn-inline-test-connection"
-                          onClick={handleTestInlineCreds}
-                          disabled={isTestingCreds}
-                          className="px-3 py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold flex items-center gap-1.5 border border-slate-700 disabled:opacity-50 cursor-pointer"
-                        >
-                          {isTestingCreds ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5 text-indigo-400" />}
-                          <span>Test Access</span>
-                        </button>
-                        <button
-                          type="button"
-                          id="btn-inline-save-database"
-                          onClick={handleSaveInlineCreds}
-                          disabled={isSavingCreds}
-                          className="px-3 py-1.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold flex items-center gap-1.5 disabled:opacity-50 shadow-xs cursor-pointer"
-                        >
-                          {isSavingCreds ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Database className="w-3.5 h-3.5" />}
-                          <span>Store into Database</span>
-                        </button>
-                      </div>
-
-                      {credTestFeedback && (
-                        <span className={`text-[11px] font-medium flex items-center gap-1.5 ${
-                          credTestFeedback.success ? 'text-emerald-400' : 'text-amber-400'
-                        }`}>
-                          {credTestFeedback.success ? <CheckCircle2 className="w-3.5 h-3.5 shrink-0" /> : <AlertTriangle className="w-3.5 h-3.5 shrink-0" />}
-                          <span>{credTestFeedback.message}</span>
-                        </span>
-                      )}
+                    <div className="flex items-center justify-between pt-1">
+                      <span className="text-[11px] text-slate-400">
+                        All extracted parameters have been mapped into Step 2 (Network) and Step 4 (BMC).
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleApplyServiceNowFields(retrievedRitmData.extractedFields, retrievedRitmData)}
+                        className="px-2.5 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-semibold cursor-pointer"
+                      >
+                        Re-apply Parameters
+                      </button>
                     </div>
                   </div>
                 )}
               </div>
 
-              <div className="bg-slate-50/70 p-5 rounded-xl border border-slate-200 space-y-4">
-                {/* RITM # Field */}
-                <div>
-                  <label className="block text-xs font-bold text-slate-800 mb-1 flex items-center justify-between">
-                    <span className="flex items-center gap-1.5">
-                      <FileText className="w-3.5 h-3.5 text-indigo-600" />
-                      <span>RITM # (ServiceNow / ITSM Request Item Number)</span>
-                    </span>
-                    <div className="flex items-center gap-3">
-                      <button
-                        type="button"
-                        onClick={() => setShowCredentialsModal(true)}
-                        className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 flex items-center gap-1 cursor-pointer"
-                      >
-                        <Key className="w-3 h-3" />
-                        <span>{dbCredentials?.storedInDb ? 'Credentials in DB' : 'Prompt Credentials for DB'}</span>
-                      </button>
-                      <span className="text-[10px] text-indigo-600 font-semibold uppercase tracking-wider">Required Field</span>
-                    </div>
-                  </label>
-                  <div className="relative">
-                    <input
-                      type="text"
-                      id="input-ritm-number"
-                      value={ritmNumber}
-                      onChange={e => setRitmNumber(e.target.value)}
-                      placeholder="e.g. RITM0012345"
-                      className="w-full text-sm font-mono font-bold rounded-lg border border-slate-300 p-2.5 pl-3 pr-10 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 bg-white"
-                    />
-                    {ritmNumber && ritmNumber.trim().length > 2 && (
-                      <span className="absolute right-3 top-3 text-emerald-600">
-                        <Check className="w-4 h-4 stroke-[3]" />
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-[11px] text-slate-500 mt-1">
-                    Every baremetal deployment job is cryptographically tagged with this RITM # for enterprise change auditing and compliance logs.
-                  </p>
+              {/* Additional ITIL Metadata */}
+              <div className="bg-slate-50/70 p-4 rounded-xl border border-slate-200 space-y-3">
+                <div className="text-xs font-bold text-slate-800 flex items-center justify-between">
+                  <span>Additional ITIL Change Control Metadata</span>
+                  <span className="text-[10px] text-slate-500">Auto-filled from RITM or customized</span>
                 </div>
-
-                {/* Additional ITIL Metadata */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 border-t border-slate-200/80">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-xs font-semibold text-slate-700 mb-1">
                       Requesting Engineering Group / Entity
@@ -882,7 +1102,7 @@ export const BaremetalWizardView: React.FC<BaremetalWizardViewProps> = ({
                       type="text"
                       value={ritmRequester}
                       onChange={e => setRitmRequester(e.target.value)}
-                      className="w-full text-xs rounded-lg border-slate-300 p-2 bg-white"
+                      className="w-full text-xs rounded-lg border-slate-300 p-2 bg-white text-slate-900"
                       placeholder="e.g. Cloud Infrastructure Operations"
                     />
                   </div>
@@ -894,7 +1114,7 @@ export const BaremetalWizardView: React.FC<BaremetalWizardViewProps> = ({
                     <select
                       value={ritmEnvironment}
                       onChange={e => setRitmEnvironment(e.target.value as any)}
-                      className="w-full text-xs rounded-lg border-slate-300 p-2 bg-white"
+                      className="w-full text-xs rounded-lg border-slate-300 p-2 bg-white text-slate-900"
                     >
                       <option value="Production">Production Cluster (Strict SLA)</option>
                       <option value="Staging">Staging & Pre-Production</option>
@@ -903,13 +1123,6 @@ export const BaremetalWizardView: React.FC<BaremetalWizardViewProps> = ({
                   </div>
                 </div>
               </div>
-
-              {/* ServiceNow Enterprise Ticket & Specific Field Extractor */}
-              <ServiceNowInspector
-                currentRitm={ritmNumber}
-                onApplyFields={handleApplyServiceNowFields}
-                onRitmChange={setRitmNumber}
-              />
             </div>
           )}
 

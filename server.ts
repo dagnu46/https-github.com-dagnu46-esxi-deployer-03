@@ -3623,19 +3623,19 @@ async function startServer() {
       const authHeader = username && password ? ('Basic ' + Buffer.from(`${username}:${password}`).toString('base64')) : '';
       const testUrl = `${instanceUrl.replace(/\/+$/, '')}/api/now/table/sc_req_item?sysparm_limit=1`;
 
-      try {
-        const headers: Record<string, string> = {
-          'Accept': 'application/json',
-          'User-Agent': 'vCenter-Orchestrator/1.0'
-        };
-        if (authHeader) {
-          headers['Authorization'] = authHeader;
-        }
+      const headers: Record<string, string> = {
+        'Accept': 'application/json',
+        'User-Agent': 'vCenter-Orchestrator/1.0'
+      };
+      if (authHeader) {
+        headers['Authorization'] = authHeader;
+      }
 
+      try {
         const fetchRes = await fetch(testUrl, {
           method: 'GET',
           headers,
-          signal: AbortSignal.timeout(5000)
+          signal: AbortSignal.timeout(6000)
         });
 
         const latency = Date.now() - startTime;
@@ -3643,7 +3643,7 @@ async function startServer() {
           return res.json({
             success: true,
             status: 'connected',
-            message: `Authenticated successfully to ServiceNow (${instanceUrl}) as ${username}`,
+            message: `Real connection verified: Authenticated to ServiceNow (${instanceUrl}) as ${username}`,
             latencyMs: latency,
             instanceUrl,
             username
@@ -3651,35 +3651,35 @@ async function startServer() {
         }
 
         if (fetchRes.status === 401 || fetchRes.status === 403) {
-          return res.json({
+          return res.status(fetchRes.status).json({
             success: false,
             status: 'auth_failed',
-            message: `ServiceNow authentication rejected (HTTP ${fetchRes.status}) for user ${username}`,
+            message: `ServiceNow Authentication Rejected (HTTP ${fetchRes.status}) for user "${username}". Check login and password.`,
             latencyMs: latency,
             instanceUrl,
             username
           });
         }
+
+        return res.status(fetchRes.status).json({
+          success: false,
+          status: 'http_error',
+          message: `ServiceNow instance returned HTTP ${fetchRes.status} (${fetchRes.statusText})`,
+          latencyMs: latency,
+          instanceUrl,
+          username
+        });
       } catch (networkErr: any) {
-        // If outbound network or corporate intranet blocks direct connection from sandbox container
-        return res.json({
-          success: true,
-          status: 'firewall_fallback',
-          message: `Connected via enterprise gateway proxy to ${instanceUrl} (${networkErr.message || 'Intranet protected'})`,
-          latencyMs: 38,
+        const latency = Date.now() - startTime;
+        return res.status(502).json({
+          success: false,
+          status: 'connection_failed',
+          message: `Real Connection Failed: Unable to reach ServiceNow at ${instanceUrl} (${networkErr.message})`,
+          latencyMs: latency,
           instanceUrl,
           username
         });
       }
-
-      res.json({
-        success: true,
-        status: 'connected',
-        message: `ServiceNow instance verified at ${instanceUrl}`,
-        latencyMs: 42,
-        instanceUrl,
-        username
-      });
     } catch (e: any) {
       res.status(500).json({ success: false, error: e.message });
     }
@@ -3690,7 +3690,7 @@ async function startServer() {
     try {
       const ritmNumber = req.params.ritmNumber?.trim().toUpperCase();
       if (!ritmNumber) {
-        return res.status(400).json({ error: 'RITM number is required' });
+        return res.status(400).json({ success: false, error: 'RITM number is required' });
       }
 
       const dbCreds = await getServiceNowCredentials();
@@ -3701,118 +3701,120 @@ async function startServer() {
       const authHeader = username && password ? ('Basic ' + Buffer.from(`${username}:${password}`).toString('base64')) : '';
       const tableUrl = `${instanceUrl.replace(/\/+$/, '')}/api/now/table/sc_req_item?sysparm_query=number=${encodeURIComponent(ritmNumber)}^ORsys_id=${encodeURIComponent(ritmNumber)}&sysparm_display_value=all`;
 
-      let liveResult: any = null;
-      try {
-        const headers: Record<string, string> = {
-          'Accept': 'application/json',
-          'User-Agent': 'vCenter-Orchestrator/1.0'
-        };
-        if (authHeader) {
-          headers['Authorization'] = authHeader;
-        }
-
-        const fetchRes = await fetch(tableUrl, {
-          method: 'GET',
-          headers,
-          signal: AbortSignal.timeout(6000)
-        });
-
-        if (fetchRes.ok) {
-          const body = await fetchRes.json();
-          if (body?.result && body.result.length > 0) {
-            liveResult = body.result[0];
-          }
-        }
-      } catch (fetchErr) {
-        // Continue to fallback simulation if network is unreachable from container
+      const headers: Record<string, string> = {
+        'Accept': 'application/json',
+        'User-Agent': 'vCenter-Orchestrator/1.0'
+      };
+      if (authHeader) {
+        headers['Authorization'] = authHeader;
       }
 
-      // Generate realistic deterministic parameters based on RITM ticket
-      const seed = Math.abs(ritmNumber.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0));
-      const rack = (seed % 14) + 1;
-      const unit = (seed % 28) + 10;
-      const hostIpSuffix = (seed % 180) + 20;
-      const isDell = seed % 2 === 0;
+      let fetchRes: Response;
+      try {
+        fetchRes = await fetch(tableUrl, {
+          method: 'GET',
+          headers,
+          signal: AbortSignal.timeout(7000)
+        });
+      } catch (fetchErr: any) {
+        return res.status(502).json({
+          success: false,
+          error: `Real connection failed to ServiceNow (${instanceUrl}): ${fetchErr.message}. Ensure instance URL is accessible.`
+        });
+      }
 
-      const hostname = liveResult?.variables?.hostname?.display_value || 
-                       liveResult?.variables?.server_name?.display_value || 
-                       liveResult?.cmdb_ci?.display_value || 
-                       `esx-prod-r0${rack}-n0${unit}.generali.grp`;
+      if (fetchRes.status === 401 || fetchRes.status === 403) {
+        return res.status(fetchRes.status).json({
+          success: false,
+          error: `ServiceNow Authentication Failed (HTTP ${fetchRes.status}) for user "${username}". Please verify your login and password.`
+        });
+      }
 
-      const managementIp = liveResult?.variables?.ip_address?.display_value || 
-                           liveResult?.variables?.management_ip?.display_value || 
-                           `10.120.${rack}.${hostIpSuffix}`;
+      if (!fetchRes.ok) {
+        return res.status(fetchRes.status).json({
+          success: false,
+          error: `ServiceNow API returned HTTP ${fetchRes.status} (${fetchRes.statusText})`
+        });
+      }
 
-      const ipmiAddress = liveResult?.variables?.ipmi_ip?.display_value || 
-                          liveResult?.variables?.bmc_ip?.display_value || 
-                          `192.168.${rack}.${hostIpSuffix}`;
+      const body = await fetchRes.json();
+      if (!body?.result || !Array.isArray(body.result) || body.result.length === 0) {
+        return res.status(404).json({
+          success: false,
+          error: `No ServiceNow record found for RITM "${ritmNumber}" in instance ${instanceUrl}.`
+        });
+      }
 
-      const vmotionIp = liveResult?.variables?.vmotion_ip?.display_value || 
-                        `10.121.${rack}.${hostIpSuffix}`;
+      const raw = body.result[0];
+      const getVal = (field: any) => {
+        if (!field) return '';
+        if (typeof field === 'string') return field;
+        return field.display_value || field.value || '';
+      };
 
-      const shortDescription = liveResult?.short_description?.display_value || 
-                               liveResult?.short_description || 
-                               `Provision Baremetal VMware ESXi Node for ${hostname}`;
+      const shortDescription = getVal(raw.short_description) || `Provision Baremetal VMware ESXi Node (${ritmNumber})`;
+      const description = getVal(raw.description) || '';
+      const state = getVal(raw.state) || 'Work in Progress';
+      const stage = getVal(raw.stage) || 'Fulfillment';
+      const approval = getVal(raw.approval) || 'Approved';
+      const requester = getVal(raw.request) || getVal(raw.opened_by) || getVal(raw.requested_for) || username;
+      const sysId = getVal(raw.sys_id);
 
-      const requester = liveResult?.request?.display_value || 
-                        liveResult?.opened_by?.display_value || 
-                        `${username} (Infrastructure Core Services)`;
+      // Extract variables if available
+      const vars = raw.variables || {};
+      const hostname = getVal(vars.hostname) || getVal(vars.server_name) || getVal(raw.cmdb_ci);
+      const managementIp = getVal(vars.ip_address) || getVal(vars.management_ip) || getVal(vars.ip);
+      const managementMask = getVal(vars.subnet_mask) || getVal(vars.management_mask) || '255.255.255.0';
+      const ipmiAddress = getVal(vars.ipmi_ip) || getVal(vars.bmc_ip) || getVal(vars.ipmi_address) || getVal(vars.drac_ip);
+      const vmotionIp = getVal(vars.vmotion_ip);
+      const vmotionMask = getVal(vars.vmotion_mask) || '255.255.255.0';
+      const gatewayIp = getVal(vars.gateway_ip) || getVal(vars.default_gateway);
+      const vlanId = vars.vlan_id ? parseInt(getVal(vars.vlan_id), 10) : undefined;
+      const hardwareModel = getVal(vars.hardware_model) || getVal(vars.server_model);
+      const hardwareVendorRaw = (getVal(vars.vendor) || getVal(vars.manufacturer)).toUpperCase();
+      const hardwareVendor = hardwareVendorRaw.includes('LENOVO') ? 'LENOVO' : (hardwareVendorRaw.includes('DELL') ? 'DELL' : undefined);
+      const esxiVersion = getVal(vars.esxi_version) || '8.0U2';
+      const environment = getVal(vars.environment) || getVal(raw.environment) || 'Production';
+      const datacenter = getVal(vars.datacenter) || getVal(raw.location) || '';
+      const cluster = getVal(vars.cluster) || '';
 
       const responsePayload = {
-        number: ritmNumber,
-        sysId: liveResult?.sys_id?.value || `sys_${seed.toString(36)}`,
+        success: true,
+        number: getVal(raw.number) || ritmNumber,
+        sysId,
         shortDescription,
-        description: liveResult?.description?.display_value || `Automated bare-metal ESXi deployment ticket for cluster infrastructure in Rack ${rack}, Unit ${unit}.`,
-        state: liveResult?.state?.display_value || 'Work in Progress',
-        stage: liveResult?.stage?.display_value || 'Fulfillment',
-        approval: liveResult?.approval?.display_value || 'Approved',
+        description,
+        state,
+        stage,
+        approval,
         requester,
-        environment: 'Production',
-        datacenter: 'FR-DC-PARIS-01',
-        cluster: 'Cluster-Compute-Prod-01',
+        environment,
+        datacenter,
+        cluster,
         extractedFields: {
-          hostname,
-          managementIp,
-          managementMask: '255.255.255.0',
-          ipmiAddress,
-          vmotionIp,
-          vmotionMask: '255.255.255.0',
-          gatewayIp: `10.120.${rack}.1`,
-          vlanId: 120,
+          hostname: hostname || undefined,
+          managementIp: managementIp || undefined,
+          managementMask,
+          ipmiAddress: ipmiAddress || undefined,
+          vmotionIp: vmotionIp || undefined,
+          vmotionMask,
+          gatewayIp: gatewayIp || undefined,
+          vlanId: isNaN(vlanId as number) ? undefined : vlanId,
           dnsServers: ['8.8.8.8', '10.100.1.1'],
-          hardwareModel: isDell ? 'Dell PowerEdge R750' : 'Lenovo ThinkSystem SR650 V2',
-          hardwareVendor: isDell ? 'DELL' : 'LENOVO',
-          esxiVersion: '8.0U2'
+          hardwareModel: hardwareModel || undefined,
+          hardwareVendor: hardwareVendor as ('DELL' | 'LENOVO' | undefined),
+          esxiVersion
         },
-        allVariables: {
-          hostname: { label: 'ESXi Hostname FQDN', value: hostname, displayValue: hostname },
-          management_ip: { label: 'Management IP (vmk0)', value: managementIp, displayValue: managementIp },
-          subnet_mask: { label: 'Management Subnet Mask', value: '255.255.255.0', displayValue: '255.255.255.0' },
-          ipmi_address: { label: 'IPMI / BMC Address', value: ipmiAddress, displayValue: ipmiAddress },
-          vmotion_ip: { label: 'vMotion Dedicated IP', value: vmotionIp, displayValue: vmotionIp },
-          vmotion_mask: { label: 'vMotion Subnet Mask', value: '255.255.255.0', displayValue: '255.255.255.0' },
-          default_gateway: { label: 'Default Gateway', value: `10.120.${rack}.1`, displayValue: `10.120.${rack}.1` },
-          management_vlan: { label: 'Management VLAN ID', value: 120, displayValue: '120' },
-          hardware_model: { label: 'Target Server Model', value: isDell ? 'Dell PowerEdge R750' : 'Lenovo ThinkSystem SR650 V2', displayValue: isDell ? 'Dell PowerEdge R750' : 'Lenovo ThinkSystem SR650 V2' },
-          vendor: { label: 'Vendor Ecosystem', value: isDell ? 'DELL' : 'LENOVO', displayValue: isDell ? 'Dell EMC' : 'Lenovo' },
-          datacenter_loc: { label: 'Datacenter Location', value: 'FR-DC-PARIS-01', displayValue: 'FR-DC-PARIS-01 (Equinix PA4)' },
-          vsphere_cluster: { label: 'Target vCenter Cluster', value: 'Cluster-Compute-Prod-01', displayValue: 'Cluster-Compute-Prod-01' }
-        },
-        rawFields: liveResult || {
-          number: ritmNumber,
-          opened_by: username,
-          approval: 'approved',
-          state: '2',
-          service_catalog_item: 'Bare-Metal ESXi Provisioning'
-        },
-        source: liveResult ? 'live_api' : 'simulated',
+        allVariables: vars,
+        rawFields: raw,
+        source: 'live_api' as const,
         instanceUrl,
         fetchedAt: new Date().toISOString()
       };
 
       res.json(responsePayload);
     } catch (e: any) {
-      res.status(500).json({ error: e.message });
+      res.status(500).json({ success: false, error: e.message });
     }
   });
 
