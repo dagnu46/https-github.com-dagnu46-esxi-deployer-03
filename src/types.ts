@@ -641,6 +641,30 @@ export interface ServiceNowConnectionConfig {
   password?: string;
   isConnected?: boolean;
   lastChecked?: string;
+  storedInDb?: boolean;
+  updatedAt?: string;
+}
+
+export interface ServiceNowCredentials {
+  instanceUrl: string;
+  username: string;
+  password?: string;
+  authType?: 'basic' | 'oauth' | 'token';
+  apiToken?: string;
+  environment?: string;
+  storedInDb?: boolean;
+  updatedAt?: string;
+  lastChecked?: string;
+  isConnected?: boolean;
+}
+
+export interface BaremetalOutputLog {
+  id: string;
+  timestamp: string;
+  category: 'SERVICENOW' | 'DATABASE' | 'IPMI' | 'ISO' | 'KICKSTART' | 'DEPLOY' | 'SECURITY' | 'SYSTEM';
+  level: 'info' | 'success' | 'warn' | 'error' | 'stage';
+  message: string;
+  details?: string;
 }
 
 

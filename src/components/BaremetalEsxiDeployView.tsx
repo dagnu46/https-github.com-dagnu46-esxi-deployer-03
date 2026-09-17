@@ -52,6 +52,8 @@ import {
 import { testServerAccess } from '../utils/accessTester';
 import { BaremetalWizardView } from './BaremetalWizardView';
 import { BaremetalStepOutputs } from './BaremetalStepOutputs';
+import { BaremetalGlobalOutputConsole } from './BaremetalGlobalOutputConsole';
+import { logBaremetalOutput } from '../services/baremetalOutputLogger';
 import { getStoredEsxiIsos } from '../services/esxiIsoService';
 
 interface BaremetalEsxiDeployViewProps {
@@ -498,8 +500,15 @@ export const BaremetalEsxiDeployView: React.FC<BaremetalEsxiDeployViewProps> = (
       setJobs(prev => [res.job!, ...prev]);
       setActiveJobId(res.job.id);
       setActiveSubTab('jobs');
+      logBaremetalOutput(
+        'DEPLOY',
+        'stage',
+        `Baremetal deployment job [${ritmNumber}] started for host "${esxiName}"`,
+        `Vendor: ${selectedVendor} | IP: ${hostIp} | BMC: ${hardwareForm.bmcIp} | Profile: ${isDell ? 'Dell OME' : 'Lenovo LXCA'}`
+      );
       onShowToast?.(`Baremetal deployment job [${ritmNumber}] started via ${isDell ? 'Dell OpenManage Enterprise' : 'Lenovo LXCA'}!`, 'success');
     } else {
+      logBaremetalOutput('DEPLOY', 'error', `Failed to start deployment job [${ritmNumber}]: ${res.error}`);
       onShowToast?.(res.error || 'Failed to initiate baremetal deployment', 'warn');
     }
   };
@@ -512,10 +521,22 @@ export const BaremetalEsxiDeployView: React.FC<BaremetalEsxiDeployViewProps> = (
       const res = await stepBaremetalJob(activeJob.id);
       if (res.success && res.job) {
         setJobs(prev => prev.map(j => j.id === res.job!.id ? res.job! : j));
+        logBaremetalOutput(
+          'DEPLOY',
+          'stage',
+          `Job [${res.job.ritmNumber}] progressed: ${res.job.currentStepMessage} (${res.job.progressPercent}%)`,
+          `Status: ${res.job.status} | Stage: ${res.job.stage}`
+        );
         if (res.job.status === 'installed' && res.job.postInstallValidation) {
           setPostInstallResult(res.job.postInstallValidation);
           setVerifyTargetIp(res.job.targetManagementIp);
           setVerifyVendor(res.job.vendor);
+          logBaremetalOutput(
+            'DEPLOY',
+            'success',
+            `Bare-metal VMware ESXi hypervisor installed successfully on host "${res.job.serverHostname}"!`,
+            `Management IP: ${res.job.targetManagementIp} | Build: ${res.job.esxiVersion} | SSH & Shell verified`
+          );
           onShowToast?.(`Bare-metal VMware ESXi deployment completed successfully! "Once ESXi Installed" verification passed.`, 'success');
         }
       }
@@ -790,6 +811,9 @@ export const BaremetalEsxiDeployView: React.FC<BaremetalEsxiDeployViewProps> = (
           </button>
         </div>
       </div>
+
+      {/* GLOBAL ENGINE OUTPUT WINDOW (Directly below the great banner) */}
+      <BaremetalGlobalOutputConsole onShowToast={onShowToast} className="mb-6" />
 
       {/* SUB-VIEW 1: DEPLOYMENT WIZARD */}
       {activeSubTab === 'wizard' && (

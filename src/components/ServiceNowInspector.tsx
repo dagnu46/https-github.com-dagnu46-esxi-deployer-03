@@ -14,15 +14,19 @@ import {
   Check,
   ChevronDown,
   ChevronUp,
-  Cpu
+  Cpu,
+  Database
 } from 'lucide-react';
 import { ServiceNowRitmData, ServiceNowExtractedFields, ServiceNowConnectionConfig } from '../types';
 import { 
   fetchServiceNowRitm, 
   testServiceNowConnection, 
   getStoredServiceNowConfig, 
-  saveStoredServiceNowConfig 
+  saveStoredServiceNowConfig,
+  fetchDatabaseServiceNowCredentials,
+  saveDatabaseServiceNowCredentials
 } from '../services/servicenowService';
+import { logBaremetalOutput } from '../services/baremetalOutputLogger';
 
 interface ServiceNowInspectorProps {
   currentRitm: string;
@@ -45,8 +49,25 @@ export const ServiceNowInspector: React.FC<ServiceNowInspectorProps> = ({
   const [showSettings, setShowSettings] = useState(false);
   const [config, setConfig] = useState<ServiceNowConnectionConfig>(getStoredServiceNowConfig());
   const [testingConn, setTestingConn] = useState(false);
+  const [savingDb, setSavingDb] = useState(false);
   const [connMessage, setConnMessage] = useState<{ success: boolean; text: string } | null>(null);
   const [showAllVariables, setShowAllVariables] = useState(false);
+
+  // Synchronize with database credentials on mount
+  useEffect(() => {
+    fetchDatabaseServiceNowCredentials().then((dbCreds) => {
+      if (dbCreds) {
+        setConfig((prev) => ({
+          ...prev,
+          instanceUrl: dbCreds.instanceUrl || prev.instanceUrl,
+          username: dbCreds.username || prev.username,
+          password: dbCreds.password || prev.password,
+          storedInDb: Boolean(dbCreds.storedInDb),
+          isConnected: dbCreds.isConnected
+        }));
+      }
+    });
+  }, []);
 
   useEffect(() => {
     if (currentRitm && currentRitm !== ticketInput) {
@@ -62,6 +83,13 @@ export const ServiceNowInspector: React.FC<ServiceNowInspectorProps> = ({
     setError(null);
     setAppliedSuccess(false);
 
+    logBaremetalOutput(
+      'SERVICENOW',
+      'info',
+      `Querying ServiceNow Table API for ticket: ${num}...`,
+      `Target host: ${config.instanceUrl} | User: ${config.username || 'svc_account'}`
+    );
+
     try {
       const data = await fetchServiceNowRitm(num, {
         instanceUrl: config.instanceUrl,
@@ -70,8 +98,16 @@ export const ServiceNowInspector: React.FC<ServiceNowInspectorProps> = ({
       });
       setRitmData(data);
       onRitmChange(data.number);
+
+      logBaremetalOutput(
+        'SERVICENOW',
+        'success',
+        `Successfully retrieved ServiceNow ticket ${data.number}: ${data.shortDescription}`,
+        `Requester: ${data.requester} | Env: ${data.environment} | Host: ${data.extractedFields?.hostname || 'pending'} | IPMI: ${data.extractedFields?.ipmiAddress || 'none'}`
+      );
     } catch (err: any) {
       setError(err.message || 'Failed to fetch ServiceNow ticket');
+      logBaremetalOutput('SERVICENOW', 'error', `Failed to fetch ticket ${num}: ${err.message}`);
     } finally {
       setLoading(false);
     }
@@ -81,12 +117,23 @@ export const ServiceNowInspector: React.FC<ServiceNowInspectorProps> = ({
     if (!ritmData) return;
     onApplyFields(ritmData.extractedFields, ritmData);
     setAppliedSuccess(true);
+    logBaremetalOutput(
+      'SERVICENOW',
+      'stage',
+      `Applied ServiceNow parameters from ${ritmData.number} to Baremetal Wizard`,
+      `Host: ${ritmData.extractedFields?.hostname || 'N/A'}, Management IP: ${ritmData.extractedFields?.managementIp || 'N/A'}, IPMI: ${ritmData.extractedFields?.ipmiAddress || 'N/A'}`
+    );
     setTimeout(() => setAppliedSuccess(false), 3500);
   };
 
   const handleTestConnection = async () => {
     setTestingConn(true);
     setConnMessage(null);
+    logBaremetalOutput(
+      'SERVICENOW',
+      'info',
+      `Testing connectivity to ${config.instanceUrl} (user: ${config.username})...`
+    );
     try {
       const res = await testServiceNowConnection(config);
       saveStoredServiceNowConfig({
@@ -98,13 +145,59 @@ export const ServiceNowInspector: React.FC<ServiceNowInspectorProps> = ({
         success: res.success,
         text: res.message + (res.latencyMs ? ` (${res.latencyMs}ms)` : '')
       });
+      logBaremetalOutput(
+        'SERVICENOW',
+        res.success ? 'success' : 'warn',
+        res.message,
+        `Latency: ${res.latencyMs || 0}ms`
+      );
     } catch (err: any) {
       setConnMessage({
         success: false,
         text: err.message || 'Connection test failed'
       });
+      logBaremetalOutput('SERVICENOW', 'error', `Connection test error: ${err.message}`);
     } finally {
       setTestingConn(false);
+    }
+  };
+
+  const handleSaveToDatabase = async () => {
+    setSavingDb(true);
+    setConnMessage(null);
+    try {
+      const res = await saveDatabaseServiceNowCredentials({
+        instanceUrl: config.instanceUrl,
+        username: config.username,
+        password: config.password,
+        authType: 'basic',
+        storedInDb: true
+      });
+      if (res.success) {
+        setConfig((prev) => ({ ...prev, storedInDb: true }));
+        setConnMessage({
+          success: true,
+          text: 'Credentials saved into PostgreSQL database (app_settings)!'
+        });
+        logBaremetalOutput(
+          'DATABASE',
+          'success',
+          `ServiceNow credentials saved into database (app_settings table)`,
+          `Instance: ${config.instanceUrl} | User: ${config.username}`
+        );
+      } else {
+        setConnMessage({
+          success: false,
+          text: res.message || 'Failed to save into database'
+        });
+      }
+    } catch (e: any) {
+      setConnMessage({
+        success: false,
+        text: e.message || 'Error saving to database'
+      });
+    } finally {
+      setSavingDb(false);
     }
   };
 
@@ -189,14 +282,27 @@ export const ServiceNowInspector: React.FC<ServiceNowInspectorProps> = ({
                 type="button"
                 onClick={handleTestConnection}
                 disabled={testingConn}
-                className="px-3 py-1.5 rounded bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+                className="px-3 py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-white font-semibold text-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
               >
                 {testingConn ? (
                   <RefreshCw className="w-3.5 h-3.5 animate-spin" />
                 ) : (
                   <ShieldCheck className="w-3.5 h-3.5" />
                 )}
-                <span>Test Connection to ServiceNow</span>
+                <span>Test Connection</span>
+              </button>
+              <button
+                type="button"
+                disabled={savingDb}
+                onClick={handleSaveToDatabase}
+                className="px-3 py-1.5 rounded bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+              >
+                {savingDb ? (
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Database className="w-3.5 h-3.5" />
+                )}
+                <span>Store into Database</span>
               </button>
               <button
                 type="button"
@@ -206,7 +312,7 @@ export const ServiceNowInspector: React.FC<ServiceNowInspectorProps> = ({
                 }}
                 className="px-3 py-1.5 rounded bg-white border border-slate-300 hover:bg-slate-100 text-slate-700 font-medium text-xs cursor-pointer"
               >
-                Save Configuration
+                Close
               </button>
             </div>
 

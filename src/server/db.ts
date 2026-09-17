@@ -1,6 +1,6 @@
 import { Pool, PoolConfig } from 'pg';
 import dotenv from 'dotenv';
-import { Server, FirmwarePackage, AuditRecord, BaselineConfig, UpgradeCampaign } from '../types';
+import { Server, FirmwarePackage, AuditRecord, BaselineConfig, UpgradeCampaign, ServiceNowCredentials } from '../types';
 import { DEFAULT_BASELINE } from '../data/mockFleet';
 
 dotenv.config();
@@ -17,6 +17,7 @@ const memPackages = new Map<string, FirmwarePackage>();
 let memAuditLogs: AuditRecord[] = [];
 let memBaseline: BaselineConfig = { ...DEFAULT_BASELINE };
 const memCampaigns = new Map<string, UpgradeCampaign>();
+const memSettings = new Map<string, any>();
 
 export function getDatabaseConfig(): { connectionString?: string; config: PoolConfig } {
   const user = process.env.PGUSER || 'postgres';
@@ -735,4 +736,82 @@ export async function getDetailedStats(): Promise<{
     },
     error: connectionError || 'PostgreSQL not connected — in-memory store active',
   };
+}
+
+export async function getAppSetting<T>(key: string): Promise<T | null> {
+  if (isConnected) {
+    try {
+      const currentPool = initPool();
+      const res = await currentPool.query('SELECT value FROM app_settings WHERE key = $1', [key]);
+      if (res.rows.length > 0) {
+        const val = res.rows[0].value;
+        memSettings.set(key, val);
+        return val as T;
+      }
+    } catch (e: any) {
+      console.warn(`[PostgreSQL] Error fetching setting ${key}:`, e.message);
+    }
+  }
+  return (memSettings.get(key) as T) || null;
+}
+
+export async function setAppSetting(key: string, value: any): Promise<void> {
+  memSettings.set(key, value);
+  if (isConnected) {
+    try {
+      const currentPool = initPool();
+      await currentPool.query(
+        `INSERT INTO app_settings (key, value, updated_at)
+         VALUES ($1, $2, NOW())
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+        [key, JSON.stringify(value)]
+      );
+    } catch (e: any) {
+      console.warn(`[PostgreSQL] Error saving setting ${key}:`, e.message);
+    }
+  }
+}
+
+export async function getServiceNowCredentials(): Promise<ServiceNowCredentials> {
+  const dbSetting = await getAppSetting<ServiceNowCredentials>('servicenow_credentials');
+  if (dbSetting && dbSetting.instanceUrl) {
+    return {
+      ...dbSetting,
+      storedInDb: true,
+    };
+  }
+
+  // Fallback to env variables if available
+  const envUrl = process.env.SERVICENOW_INSTANCE_URL || 'https://generali.service-now.com';
+  const envUser = process.env.SERVICENOW_USERNAME || '';
+  const envPass = process.env.SERVICENOW_PASSWORD || '';
+
+  return {
+    instanceUrl: envUrl,
+    username: envUser,
+    password: envPass,
+    storedInDb: false,
+    environment: 'Production',
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+export async function saveServiceNowCredentials(credentials: Partial<ServiceNowCredentials>): Promise<ServiceNowCredentials> {
+  const existing = await getServiceNowCredentials();
+  const updated: ServiceNowCredentials = {
+    instanceUrl: (credentials.instanceUrl || existing.instanceUrl || 'https://generali.service-now.com').trim(),
+    username: (credentials.username ?? existing.username ?? '').trim(),
+    password: credentials.password !== undefined ? credentials.password : existing.password,
+    authType: credentials.authType || existing.authType || 'basic',
+    apiToken: credentials.apiToken || existing.apiToken || '',
+    environment: credentials.environment || existing.environment || 'Production',
+    storedInDb: true,
+    updatedAt: new Date().toISOString(),
+    isConnected: credentials.isConnected !== undefined ? credentials.isConnected : existing.isConnected,
+    lastChecked: credentials.lastChecked || existing.lastChecked || new Date().toISOString()
+  };
+
+  await setAppSetting('servicenow_credentials', updated);
+  console.log(`[PostgreSQL] ServiceNow credentials successfully persisted to database for ${updated.instanceUrl} (user: ${updated.username})`);
+  return updated;
 }

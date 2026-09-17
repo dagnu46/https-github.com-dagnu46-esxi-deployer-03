@@ -24,7 +24,9 @@ import {
   getDetailedStats,
   seedInitialData,
   flushAllData,
-  getDatabaseConfig
+  getDatabaseConfig,
+  getServiceNowCredentials,
+  saveServiceNowCredentials
 } from './src/server/db';
 
 const PORT = 3000;
@@ -3548,12 +3550,74 @@ async function startServer() {
   // ServiceNow Table API & RITM Field Extractor
   // -------------------------------------------------------------
 
+  // GET /api/servicenow/credentials - read credentials stored in PostgreSQL database
+  app.get('/api/servicenow/credentials', async (req, res) => {
+    try {
+      const creds = await getServiceNowCredentials();
+      res.json({
+        success: true,
+        credentials: {
+          instanceUrl: creds.instanceUrl,
+          username: creds.username,
+          password: creds.password,
+          hasPassword: Boolean(creds.password),
+          storedInDb: creds.storedInDb,
+          environment: creds.environment || 'Production',
+          authType: creds.authType || 'basic',
+          updatedAt: creds.updatedAt,
+          isConnected: creds.isConnected,
+          lastChecked: creds.lastChecked
+        }
+      });
+    } catch (e: any) {
+      res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
+  // POST /api/servicenow/credentials - store credentials into PostgreSQL database
+  app.post('/api/servicenow/credentials', async (req, res) => {
+    try {
+      const { instanceUrl, username, password, environment, authType, apiToken } = req.body || {};
+      if (!instanceUrl || !instanceUrl.trim()) {
+        return res.status(400).json({ success: false, error: 'ServiceNow instance URL is required' });
+      }
+
+      const updated = await saveServiceNowCredentials({
+        instanceUrl,
+        username,
+        password,
+        environment,
+        authType,
+        apiToken,
+        storedInDb: true,
+        lastChecked: new Date().toISOString()
+      });
+
+      console.log(`[ServiceNow API] Successfully stored credentials for ${updated.instanceUrl} in database`);
+      res.json({
+        success: true,
+        message: `ServiceNow credentials successfully stored in database for ${updated.instanceUrl}`,
+        credentials: {
+          instanceUrl: updated.instanceUrl,
+          username: updated.username,
+          hasPassword: Boolean(updated.password),
+          storedInDb: true,
+          updatedAt: updated.updatedAt,
+          environment: updated.environment
+        }
+      });
+    } catch (e: any) {
+      res.status(500).json({ success: false, error: e.message });
+    }
+  });
+
   // POST /api/servicenow/test-connection
   app.post('/api/servicenow/test-connection', async (req, res) => {
     try {
-      const instanceUrl = req.body?.instanceUrl || process.env.SERVICENOW_INSTANCE_URL || 'https://generali.service-now.com';
-      const username = req.body?.username || process.env.SERVICENOW_USERNAME || '';
-      const password = req.body?.password || process.env.SERVICENOW_PASSWORD || '';
+      const dbCreds = await getServiceNowCredentials();
+      const instanceUrl = req.body?.instanceUrl || dbCreds.instanceUrl || process.env.SERVICENOW_INSTANCE_URL || 'https://generali.service-now.com';
+      const username = req.body?.username !== undefined && req.body?.username !== '' ? req.body.username : (dbCreds.username || process.env.SERVICENOW_USERNAME || '');
+      const password = req.body?.password !== undefined && req.body?.password !== '' ? req.body.password : (dbCreds.password || process.env.SERVICENOW_PASSWORD || '');
 
       const startTime = Date.now();
       const authHeader = username && password ? ('Basic ' + Buffer.from(`${username}:${password}`).toString('base64')) : '';
@@ -3629,9 +3693,10 @@ async function startServer() {
         return res.status(400).json({ error: 'RITM number is required' });
       }
 
-      const instanceUrl = req.body?.instanceUrl || process.env.SERVICENOW_INSTANCE_URL || 'https://generali.service-now.com';
-      const username = req.body?.username || process.env.SERVICENOW_USERNAME || '';
-      const password = req.body?.password || process.env.SERVICENOW_PASSWORD || '';
+      const dbCreds = await getServiceNowCredentials();
+      const instanceUrl = req.body?.instanceUrl || dbCreds.instanceUrl || process.env.SERVICENOW_INSTANCE_URL || 'https://generali.service-now.com';
+      const username = req.body?.username !== undefined && req.body?.username !== '' ? req.body.username : (dbCreds.username || process.env.SERVICENOW_USERNAME || '');
+      const password = req.body?.password !== undefined && req.body?.password !== '' ? req.body.password : (dbCreds.password || process.env.SERVICENOW_PASSWORD || '');
 
       const authHeader = username && password ? ('Basic ' + Buffer.from(`${username}:${password}`).toString('base64')) : '';
       const tableUrl = `${instanceUrl.replace(/\/+$/, '')}/api/now/table/sc_req_item?sysparm_query=number=${encodeURIComponent(ritmNumber)}^ORsys_id=${encodeURIComponent(ritmNumber)}&sysparm_display_value=all`;
