@@ -797,12 +797,16 @@ export async function fetchBaremetalJob(id: string): Promise<{
 }
 
 export async function startBaremetalDeployment(payload: {
+  ritmNumber?: string;
   serverId?: string;
   serverHostname?: string;
   vendor: 'DELL' | 'LENOVO';
   model?: string;
   bmcIp?: string;
   esxiVersion?: string;
+  esxiIsoName?: string;
+  vmotionIp?: string;
+  vmotionMask?: string;
   targetManagementIp?: string;
   dellConfig?: any;
   lenovoConfig?: any;

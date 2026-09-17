@@ -17,6 +17,8 @@ import { ExportReportModal, ExportDataset } from './components/ExportReportModal
 import { EditCampaignModal } from './components/EditCampaignModal';
 import { MainPageFirmwareUploadPanel } from './components/MainPageFirmwareUploadPanel';
 import { BaremetalEsxiDeployView } from './components/BaremetalEsxiDeployView';
+import { VersionManagerModal } from './components/VersionManagerModal';
+import { getStoredEsxiIsos } from './services/esxiIsoService';
 import { exportFleetToCsv, exportFleetToJson } from './utils/exportUtils';
 
 import { 
@@ -125,6 +127,15 @@ export default function App() {
   const handleOpenExportModal = (dataset: ExportDataset = 'fleet') => {
     setExportModalInitialDataset(dataset);
     setIsExportModalOpen(true);
+  };
+
+  // Version Manager Modal State (Firmware & ESXi)
+  const [isVersionManagerOpen, setIsVersionManagerOpen] = useState(false);
+  const [versionManagerInitialTab, setVersionManagerInitialTab] = useState<'firmware' | 'esxi'>('firmware');
+
+  const handleOpenVersionManager = (tab: 'firmware' | 'esxi' = 'firmware') => {
+    setVersionManagerInitialTab(tab);
+    setIsVersionManagerOpen(true);
   };
 
   // Wizard pre-fills
@@ -639,7 +650,8 @@ export default function App() {
   // Deploy package from catalog
   const handleDeployPackage = (pkg: FirmwarePackage) => {
     // Find servers that match supported models
-    const eligible = servers.filter(s => pkg.supportedModels.includes(s.model)).map(s => s.id);
+    const supported = Array.isArray(pkg.supportedModels) ? pkg.supportedModels : [];
+    const eligible = servers.filter(s => supported.includes(s.model)).map(s => s.id);
     setWizardPreSelectedServers(eligible.length > 0 ? eligible : servers.map(s => s.id));
     setWizardPreSelectedComponent(pkg.component);
     setIsWizardOpen(true);
@@ -772,16 +784,25 @@ export default function App() {
   // Filter servers for the list view
   const filteredServers = servers.filter(server => {
     // Search query
-    const q = searchQuery.toLowerCase();
-    const matchesSearch = 
-      server.hostname.toLowerCase().includes(q) ||
-      server.model.toLowerCase().includes(q) ||
-      (server.vendor && server.vendor.toLowerCase().includes(q)) ||
-      (server.hypervisor && server.hypervisor.toLowerCase().includes(q)) ||
-      (server.hypervisorVersion && server.hypervisorVersion.toLowerCase().includes(q)) ||
-      server.ip.includes(q) ||
-      server.bmcIp.includes(q) ||
-      server.rack.toLowerCase().includes(q);
+    const q = (searchQuery || '').toLowerCase().trim();
+    const hostname = (server.hostname || '').toLowerCase();
+    const model = (server.model || '').toLowerCase();
+    const vendor = (server.vendor || '').toLowerCase();
+    const hypervisor = (server.hypervisor || '').toLowerCase();
+    const hypervisorVer = (server.hypervisorVersion || '').toLowerCase();
+    const ip = server.ip || '';
+    const bmcIp = server.bmcIp || '';
+    const rack = (server.rack || '').toLowerCase();
+
+    const matchesSearch = !q ||
+      hostname.includes(q) ||
+      model.includes(q) ||
+      vendor.includes(q) ||
+      hypervisor.includes(q) ||
+      hypervisorVer.includes(q) ||
+      ip.includes(q) ||
+      bmcIp.includes(q) ||
+      rack.includes(q);
 
     if (!matchesSearch) return false;
 
@@ -792,7 +813,8 @@ export default function App() {
 
     // Vendor filter (HP, DELL, LENOVO)
     if (vendorFilter !== 'all') {
-      const v = server.vendor || (server.model.includes('HPE') || server.model.includes('HP') ? 'HP' : server.model.includes('Dell') ? 'DELL' : 'LENOVO');
+      const serverModel = server.model || '';
+      const v = server.vendor || (serverModel.includes('HPE') || serverModel.includes('HP') ? 'HP' : serverModel.includes('Dell') ? 'DELL' : 'LENOVO');
       if (v !== vendorFilter) return false;
     }
 
@@ -840,6 +862,9 @@ export default function App() {
         onOpenDockerDb={() => setIsDockerDbModalOpen(true)}
         onOpenVmwareIsoTester={() => handleOpenVmwareIsoTester()}
         onOpenExportModal={() => handleOpenExportModal('fleet')}
+        onOpenVersionManager={() => handleOpenVersionManager('firmware')}
+        totalPackages={packages.length}
+        totalIsos={getStoredEsxiIsos().length}
       />
 
       {/* Toast Banner */}
@@ -951,10 +976,11 @@ export default function App() {
               servers={filteredServers}
               selectedServerIds={selectedServerIds}
               onToggleServer={id => {
-                if (selectedServerIds.includes(id)) {
-                  setSelectedServerIds(selectedServerIds.filter(x => x !== id));
+                const current = Array.isArray(selectedServerIds) ? selectedServerIds : [];
+                if (current.includes(id)) {
+                  setSelectedServerIds(current.filter(x => x !== id));
                 } else {
-                  setSelectedServerIds([...selectedServerIds, id]);
+                  setSelectedServerIds([...current, id]);
                 }
               }}
               onSelectAllVisible={setSelectedServerIds}
@@ -1198,6 +1224,29 @@ export default function App() {
         fleetServers={servers}
         packages={packages}
         onSaveCampaign={handleSaveCampaign}
+      />
+
+      {/* Firmware & ESXi Version Manager Modal (Upload, Edit Title, Delete) */}
+      <VersionManagerModal
+        isOpen={isVersionManagerOpen}
+        onClose={() => setIsVersionManagerOpen(false)}
+        packages={packages}
+        servers={servers}
+        onAddPackage={newPkg => {
+          syncSavePackage(newPkg);
+          setPackages(prev => [newPkg, ...prev]);
+          showToast(`Firmware package "${newPkg.name}" registered & stored!`, 'success');
+        }}
+        onUpdatePackage={handleUpdatePackage}
+        onDeletePackage={handleDeletePackage}
+        onDeployPackage={handleDeployPackage}
+        onSelectEsxiIsoForDeploy={isoFileName => {
+          setIsVersionManagerOpen(false);
+          setActiveTab('baremetal');
+          showToast(`Selected ESXi ISO "${isoFileName}" for Baremetal Deployment`, 'info');
+        }}
+        onShowToast={showToast}
+        initialTab={versionManagerInitialTab}
       />
     </div>
   );

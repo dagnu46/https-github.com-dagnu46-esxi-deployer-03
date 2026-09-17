@@ -13,7 +13,8 @@ import {
   Database,
   Trash2,
   Disc,
-  Download
+  Download,
+  Sliders
 } from 'lucide-react';
 import { UpgradeCampaign } from '../types';
 import { DatabaseStatus } from '../services/api';
@@ -33,6 +34,9 @@ interface HeaderProps {
   onOpenDockerDb?: () => void;
   onOpenVmwareIsoTester?: () => void;
   onOpenExportModal?: () => void;
+  onOpenVersionManager?: () => void;
+  totalPackages?: number;
+  totalIsos?: number;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -48,6 +52,9 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenDockerDb,
   onOpenVmwareIsoTester,
   onOpenExportModal,
+  onOpenVersionManager,
+  totalPackages = 0,
+  totalIsos = 0,
 }) => {
   const isCampaignActive = activeCampaign && (activeCampaign.status === 'running' || activeCampaign.status === 'paused');
   const completedServers = activeCampaign ? activeCampaign.servers.filter(s => s.stage === 'completed').length : 0;
@@ -146,15 +153,56 @@ export const Header: React.FC<HeaderProps> = ({
               </button>
             )}
 
-            <button
-              type="button"
-              id="btn-start-upgrade-wizard"
-              onClick={onOpenUpgradeWizard}
-              className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-700 active:bg-indigo-800 transition-colors shadow-xs"
-            >
-              <Play className="w-3.5 h-3.5 fill-current" />
-              <span>Deploy Upgrade</span>
-            </button>
+            {onOpenVersionManager && (
+              <button
+                type="button"
+                id="btn-header-manage-versions"
+                onClick={onOpenVersionManager}
+                title="Manage Firmware & ESXi Versions: Upload, edit titles, and delete binaries & ISOs"
+                className="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 transition-all flex items-center gap-1.5 shadow-2xs"
+              >
+                <Sliders className="w-3.5 h-3.5 text-indigo-600" />
+                <span>Manage Versions</span>
+                <span className="text-[10px] font-mono px-1.5 py-0.2 rounded-full bg-indigo-200/70 text-indigo-900 font-bold">
+                  {totalPackages + totalIsos}
+                </span>
+              </button>
+            )}
+
+            {/* 2 Main Action Buttons: DEPLOYATOR 2000 & FIRMWARE LCM */}
+            <div className="flex items-center gap-2 pl-2 border-l border-slate-200">
+              <button
+                type="button"
+                id="btn-top-deployator"
+                onClick={() => onTabChange('baremetal')}
+                title="DEPLOYATOR 2000: Manage VMware ESXi Baremetal Deployment"
+                className={`inline-flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-bold transition-all shadow-xs border ${
+                  activeTab === 'baremetal'
+                    ? 'bg-emerald-700 text-white border-emerald-800 ring-2 ring-emerald-400/50'
+                    : 'bg-emerald-600 hover:bg-emerald-700 text-white border-emerald-600'
+                }`}
+              >
+                <Cpu className="w-4 h-4 text-emerald-100" />
+                <div className="text-left leading-tight">
+                  <span className="tracking-wide">DEPLOYATOR 2000</span>
+                  <span className="block text-[10px] font-medium text-emerald-100/90">ESXi Deployment</span>
+                </div>
+              </button>
+
+              <button
+                type="button"
+                id="btn-start-upgrade-wizard"
+                onClick={onOpenUpgradeWizard}
+                title="FIRMWARE LCM: Manage Server Firmware Update and Upgrade"
+                className="inline-flex items-center gap-2 px-3.5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 text-white text-xs font-bold transition-all shadow-xs border border-indigo-700"
+              >
+                <Play className="w-3.5 h-3.5 fill-current text-indigo-100" />
+                <div className="text-left leading-tight">
+                  <span className="tracking-wide">FIRMWARE LCM</span>
+                  <span className="block text-[10px] font-medium text-indigo-100/90">Firmware Upgrade</span>
+                </div>
+              </button>
+            </div>
           </div>
         </div>
 
@@ -197,13 +245,13 @@ export const Header: React.FC<HeaderProps> = ({
             onClick={() => onTabChange('baremetal')}
             className={`flex items-center gap-2 py-3 px-4 text-xs font-semibold border-b-2 transition-colors ${
               activeTab === 'baremetal'
-                ? 'border-indigo-600 text-indigo-600'
+                ? 'border-emerald-600 text-emerald-600 font-bold'
                 : 'border-transparent text-slate-600 hover:text-slate-900 hover:border-slate-300'
             }`}
           >
-            <Cpu className="w-4 h-4 text-indigo-500" />
-            <span>Deploy Baremetal ESXi</span>
-            <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-full bg-blue-100 text-blue-800">
+            <Cpu className="w-4 h-4 text-emerald-600" />
+            <span>DEPLOYATOR 2000 (Baremetal ESXi)</span>
+            <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-full bg-emerald-100 text-emerald-800">
               DELL / Lenovo
             </span>
           </button>

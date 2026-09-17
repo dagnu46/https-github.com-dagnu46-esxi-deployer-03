@@ -48,6 +48,7 @@ import {
   verifyPostInstallEsxi, 
   joinBaremetalVcenter 
 } from '../services/api';
+import { BaremetalWizardView } from './BaremetalWizardView';
 
 interface BaremetalEsxiDeployViewProps {
   servers: Server[];
@@ -78,33 +79,48 @@ export const BaremetalEsxiDeployView: React.FC<BaremetalEsxiDeployViewProps> = (
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [isAdvancingStep, setIsAdvancingStep] = useState(false);
 
-  // Wizard States (Steps 1 - 4)
-  const [wizardStep, setWizardStep] = useState<1 | 2 | 3 | 4>(1);
+  // Wizard States (Steps 1 - 5)
+  const [wizardStep, setWizardStep] = useState<1 | 2 | 3 | 4 | 5>(1);
   const [selectedVendor, setSelectedVendor] = useState<BaremetalVendor>('DELL');
   const [selectedExistingServerId, setSelectedExistingServerId] = useState<string>('');
 
+  // Form Fields as requested:
+  // 1. RITM #
+  const [ritmNumber, setRitmNumber] = useState<string>('');
+  // 2. Form: ESXi Name, IP address (+ mask), vMotion Address (+ mask), DNS IP: fix list ("8.8.8.8", "10.100.1.1")
+  const [esxiName, setEsxiName] = useState<string>('');
+  const [hostIp, setHostIp] = useState<string>('');
+  const [hostMask, setHostMask] = useState<string>('');
+  const [vmotionIp, setVmotionIp] = useState<string>('');
+  const [vmotionMask, setVmotionMask] = useState<string>('');
+  const [selectedDnsIps, setSelectedDnsIps] = useState<string[]>([]);
+  const [gatewayIp, setGatewayIp] = useState<string>('');
+  const [vlanId, setVlanId] = useState<number>(0);
+  // 3. ESXi Version: List of ESXi ISO stored into app
+  const [selectedIsoName, setSelectedIsoName] = useState<string>('');
+
   // Target Hardware Details
   const [hardwareForm, setHardwareForm] = useState({
-    hostname: 'esx-dell-r750-01.corp.internal',
-    model: 'Dell PowerEdge R750',
-    bmcIp: '192.168.10.120',
-    macAddress: 'b4:96:91:28:44:0a',
-    datacenter: 'Datacenter-Core-01',
-    rack: 'Rack-B04',
+    hostname: '',
+    model: '',
+    bmcIp: '',
+    macAddress: '',
+    datacenter: '',
+    rack: '',
   });
 
   // Dell OpenManage Config
   const [dellConfig, setDellConfig] = useState<DellOpenManageWorkflowConfig>({
-    omeHost: 'ome.datacenter.corp',
+    omeHost: '',
     omePort: 443,
-    omeUsername: 'admin',
-    omePassword: '••••••••',
-    deviceGroupId: 'grp-baremetal-compute',
-    deviceGroupName: 'Baremetal Compute Pool 01',
-    templateId: 'ome-tpl-01',
-    templateName: 'Dell PowerEdge 15G/16G ESXi 8.0 Deployment Template',
+    omeUsername: '',
+    omePassword: '',
+    deviceGroupId: '',
+    deviceGroupName: '',
+    templateId: '',
+    templateName: 'Dell PowerEdge ESXi Deployment Template',
     targetBootDevice: 'BOSS-S2_RAID1',
-    dellCustomizedIso: 'VMware-VMvisor-Installer-8.0U2-Dell-Customized-A01.iso',
+    dellCustomizedIso: '',
     installIsmAgent: true,
     installOmsaVib: true,
     enableSecureBoot: true,
@@ -113,15 +129,15 @@ export const BaremetalEsxiDeployView: React.FC<BaremetalEsxiDeployViewProps> = (
     powerProfile: 'Performance',
     autoRegisterOmeInventory: true,
     networkProfile: {
-      hostname: 'esx-dell-r750-01.corp.internal',
+      hostname: '',
       useDhcp: false,
-      staticIp: '192.168.10.201',
-      subnetMask: '255.255.255.0',
-      gateway: '192.168.10.1',
-      dnsServers: '192.168.10.10, 192.168.10.11',
-      ntpServers: 'time.corp.internal',
-      managementVlan: 100,
-      rootPassword: 'VMwarePassword!2026',
+      staticIp: '',
+      subnetMask: '',
+      gateway: '',
+      dnsServers: '',
+      ntpServers: '',
+      managementVlan: 0,
+      rootPassword: '',
       enableSsh: true,
       enableEsxiShell: true,
       vmk0UplinkNics: ['vmnic0', 'vmnic1'],
@@ -130,28 +146,28 @@ export const BaremetalEsxiDeployView: React.FC<BaremetalEsxiDeployViewProps> = (
 
   // Lenovo LXCA Config
   const [lenovoConfig, setLenovoConfig] = useState<LenovoLxcaWorkflowConfig>({
-    lxcaHost: 'lxca.datacenter.corp',
+    lxcaHost: '',
     lxcaPort: 443,
-    lxcaUsername: 'USERID',
-    lxcaPassword: '••••••••',
-    configPatternId: 'lxca-pat-01',
-    configPatternName: 'Lenovo ThinkSystem SR650/SR630 ESXi 8.0 Enterprise Pattern',
+    lxcaUsername: '',
+    lxcaPassword: '',
+    configPatternId: '',
+    configPatternName: 'Lenovo ThinkSystem ESXi Enterprise Pattern',
     targetBootDevice: 'M2_RAID1',
-    lenovoCustomizedIso: 'VMware-VMvisor-Installer-8.0U2-Lenovo-ThinkSystem-v1.4.iso',
+    lenovoCustomizedIso: '',
     enableXccAgentProvider: true,
     enableSecureBoot: true,
     uefiBootMode: 'UEFI_Only',
     autoManageInLxca: true,
     networkProfile: {
-      hostname: 'esx-lenovo-sr650-01.corp.internal',
+      hostname: '',
       useDhcp: false,
-      staticIp: '192.168.10.202',
-      subnetMask: '255.255.255.0',
-      gateway: '192.168.10.1',
-      dnsServers: '192.168.10.10, 192.168.10.11',
-      ntpServers: 'time.corp.internal',
-      managementVlan: 100,
-      rootPassword: 'VMwarePassword!2026',
+      staticIp: '',
+      subnetMask: '',
+      gateway: '',
+      dnsServers: '',
+      ntpServers: '',
+      managementVlan: 0,
+      rootPassword: '',
       enableSsh: true,
       enableEsxiShell: true,
       vmk0UplinkNics: ['vmnic0', 'vmnic1'],
@@ -232,16 +248,16 @@ export const BaremetalEsxiDeployView: React.FC<BaremetalEsxiDeployViewProps> = (
         setHardwareForm({
           hostname: match.hostname,
           model: match.model,
-          bmcIp: match.bmcIp || '192.168.10.120',
-          macAddress: match.accessStatus?.discoveredHardware?.macAddress || 'b4:96:91:28:44:0a',
-          datacenter: match.datacenter || 'Datacenter-Core-01',
-          rack: match.rack || 'Rack-B04',
+          bmcIp: match.bmcIp || '',
+          macAddress: match.accessStatus?.discoveredHardware?.macAddress || '',
+          datacenter: match.datacenter || '',
+          rack: match.rack || '',
         });
         updateNetworkProfile({
           hostname: match.hostname,
-          staticIp: match.ip || '192.168.10.201'
+          staticIp: match.ip || ''
         });
-        setVerifyTargetIp(match.ip || '192.168.10.201');
+        setVerifyTargetIp(match.ip || '');
         setVerifyVendor(v);
       }
     }
@@ -260,7 +276,17 @@ export const BaremetalEsxiDeployView: React.FC<BaremetalEsxiDeployViewProps> = (
   // Handle Server Selection Change
   const handleExistingServerChange = (serverId: string) => {
     setSelectedExistingServerId(serverId);
-    if (!serverId) return;
+    if (!serverId) {
+      setHardwareForm({
+        hostname: '',
+        model: '',
+        bmcIp: '',
+        macAddress: '',
+        datacenter: '',
+        rack: '',
+      });
+      return;
+    }
     const match = servers.find(s => s.id === serverId);
     if (match) {
       const v: BaremetalVendor = match.vendor === 'LENOVO' ? 'LENOVO' : 'DELL';
@@ -268,16 +294,16 @@ export const BaremetalEsxiDeployView: React.FC<BaremetalEsxiDeployViewProps> = (
       setHardwareForm({
         hostname: match.hostname,
         model: match.model,
-        bmcIp: match.bmcIp || '192.168.10.120',
-        macAddress: match.accessStatus?.discoveredHardware?.macAddress || 'b4:96:91:28:44:0a',
-        datacenter: match.datacenter || 'Datacenter-Core-01',
-        rack: match.rack || 'Rack-B04',
+        bmcIp: match.bmcIp || '',
+        macAddress: match.accessStatus?.discoveredHardware?.macAddress || '',
+        datacenter: match.datacenter || '',
+        rack: match.rack || '',
       });
       updateNetworkProfile({
         hostname: match.hostname,
-        staticIp: match.ip || '192.168.10.201'
+        staticIp: match.ip || ''
       });
-      setVerifyTargetIp(match.ip || '192.168.10.201');
+      setVerifyTargetIp(match.ip || '');
       setVerifyVendor(v);
     }
   };
@@ -285,35 +311,75 @@ export const BaremetalEsxiDeployView: React.FC<BaremetalEsxiDeployViewProps> = (
   // Vendor Toggle
   const handleVendorSwitch = (vendor: BaremetalVendor) => {
     setSelectedVendor(vendor);
-    if (vendor === 'DELL') {
-      setHardwareForm(prev => ({
-        ...prev,
-        hostname: prev.hostname.includes('lenovo') ? 'esx-dell-r750-01.corp.internal' : prev.hostname,
-        model: prev.model.includes('ThinkSystem') ? 'Dell PowerEdge R750' : prev.model,
-      }));
-    } else {
-      setHardwareForm(prev => ({
-        ...prev,
-        hostname: prev.hostname.includes('dell') ? 'esx-lenovo-sr650-01.corp.internal' : prev.hostname,
-        model: prev.model.includes('PowerEdge') ? 'Lenovo ThinkSystem SR650 V2' : prev.model,
-      }));
-    }
   };
 
   // Start Deployment
   const handleStartDeployment = async () => {
     const isDell = selectedVendor === 'DELL';
+    const isoName = selectedIsoName || '';
+    const computedEsxiVersion = isoName.includes('7.0') ? '7.0U3' : isoName.includes('8.0U3') ? '8.0U3' : '8.0U2';
+    
     const payload = {
+      ritmNumber,
       serverId: selectedExistingServerId || undefined,
-      serverHostname: hardwareForm.hostname,
+      serverHostname: esxiName,
       vendor: selectedVendor,
       model: hardwareForm.model,
       bmcIp: hardwareForm.bmcIp,
-      esxiVersion: isDell ? (dellConfig.dellCustomizedIso.includes('7.0') ? '7.0U3' : '8.0U2') : (lenovoConfig.lenovoCustomizedIso.includes('7.0') ? '7.0U3' : '8.0U2'),
-      targetManagementIp: currentNetworkProfile.staticIp || '192.168.10.201',
-      dellConfig: isDell ? dellConfig : undefined,
-      lenovoConfig: !isDell ? lenovoConfig : undefined,
-      networkProfile: currentNetworkProfile,
+      esxiVersion: computedEsxiVersion,
+      esxiIsoName: selectedIsoName,
+      vmotionIp,
+      vmotionMask,
+      targetManagementIp: hostIp,
+      dellConfig: isDell ? {
+        ...dellConfig,
+        dellCustomizedIso: selectedIsoName,
+        networkProfile: {
+          ...dellConfig.networkProfile,
+          hostname: esxiName,
+          ritmNumber,
+          staticIp: hostIp,
+          subnetMask: hostMask,
+          vmotionIp,
+          vmotionMask,
+          gateway: gatewayIp,
+          dnsServers: selectedDnsIps.join(', '),
+          managementVlan: vlanId
+        }
+      } : undefined,
+      lenovoConfig: !isDell ? {
+        ...lenovoConfig,
+        lenovoCustomizedIso: selectedIsoName,
+        networkProfile: {
+          ...lenovoConfig.networkProfile,
+          hostname: esxiName,
+          ritmNumber,
+          staticIp: hostIp,
+          subnetMask: hostMask,
+          vmotionIp,
+          vmotionMask,
+          gateway: gatewayIp,
+          dnsServers: selectedDnsIps.join(', '),
+          managementVlan: vlanId
+        }
+      } : undefined,
+      networkProfile: {
+        ...currentNetworkProfile,
+        hostname: esxiName,
+        ritmNumber,
+        useDhcp: false,
+        staticIp: hostIp,
+        subnetMask: hostMask,
+        vmotionIp,
+        vmotionMask,
+        gateway: gatewayIp,
+        dnsServers: selectedDnsIps.join(', '),
+        managementVlan: vlanId,
+        enableSsh: true,
+        enableEsxiShell: true,
+        rootPassword: currentNetworkProfile.rootPassword || 'VMwarePassword!2026',
+        vmk0UplinkNics: ['vmnic0', 'vmnic1']
+      },
     };
 
     const res = await startBaremetalDeployment(payload);
@@ -321,7 +387,7 @@ export const BaremetalEsxiDeployView: React.FC<BaremetalEsxiDeployViewProps> = (
       setJobs(prev => [res.job!, ...prev]);
       setActiveJobId(res.job.id);
       setActiveSubTab('jobs');
-      onShowToast?.(`Baremetal deployment job started via ${isDell ? 'Dell OpenManage Enterprise' : 'Lenovo LXCA'}!`, 'success');
+      onShowToast?.(`Baremetal deployment job [${ritmNumber}] started via ${isDell ? 'Dell OpenManage Enterprise' : 'Lenovo LXCA'}!`, 'success');
     } else {
       onShowToast?.(res.error || 'Failed to initiate baremetal deployment', 'warn');
     }
@@ -589,875 +655,43 @@ export const BaremetalEsxiDeployView: React.FC<BaremetalEsxiDeployViewProps> = (
 
       {/* SUB-VIEW 1: DEPLOYMENT WIZARD */}
       {activeSubTab === 'wizard' && (
-        <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
-          {/* Step Indicator Header */}
-          <div className="bg-slate-50 border-b border-slate-200 px-6 py-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center space-x-8">
-                {[
-                  { step: 1, title: 'Target Baremetal Node' },
-                  { step: 2, title: selectedVendor === 'DELL' ? 'DELL OpenManage Workflow' : 'Lenovo LXCA Workflow' },
-                  { step: 3, title: 'ESXi Kickstart & Network' },
-                  { step: 4, title: 'Preflight & Launch' },
-                ].map(s => (
-                  <button
-                    key={s.step}
-                    type="button"
-                    onClick={() => setWizardStep(s.step as any)}
-                    className={`flex items-center gap-2.5 text-xs font-semibold transition-colors ${
-                      wizardStep === s.step
-                        ? 'text-indigo-600'
-                        : wizardStep > s.step
-                        ? 'text-slate-700'
-                        : 'text-slate-400'
-                    }`}
-                  >
-                    <span className={`w-6 h-6 rounded-full flex items-center justify-center text-xs ${
-                      wizardStep === s.step
-                        ? 'bg-indigo-600 text-white'
-                        : wizardStep > s.step
-                        ? 'bg-emerald-100 text-emerald-700'
-                        : 'bg-slate-200 text-slate-600'
-                    }`}>
-                      {wizardStep > s.step ? <Check className="w-3.5 h-3.5" /> : s.step}
-                    </span>
-                    <span>{s.title}</span>
-                  </button>
-                ))}
-              </div>
-
-              <div className="text-xs text-slate-500 font-medium">
-                Step {wizardStep} of 4
-              </div>
-            </div>
-          </div>
-
-          <div className="p-6">
-            {/* STEP 1: TARGET HARDWARE SELECTION */}
-            {wizardStep === 1 && (
-              <div className="space-y-6 max-w-4xl">
-                <div>
-                  <h2 className="text-base font-bold text-slate-900">Select Bare-Metal Hardware & Vendor</h2>
-                  <p className="text-xs text-slate-500 mt-0.5">
-                    Choose whether you are deploying to a DELL PowerEdge server (managed through Dell OpenManage Enterprise) or a Lenovo ThinkSystem server (managed through Lenovo XClarity Administrator).
-                  </p>
-                </div>
-
-                {/* Vendor Selector Cards */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div
-                    onClick={() => handleVendorSwitch('DELL')}
-                    className={`cursor-pointer rounded-xl p-5 border-2 transition-all flex flex-col justify-between ${
-                      selectedVendor === 'DELL'
-                        ? 'border-indigo-600 bg-indigo-50/40 ring-2 ring-indigo-500/20'
-                        : 'border-slate-200 hover:border-slate-300 bg-white'
-                    }`}
-                  >
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-blue-100 text-blue-800 uppercase tracking-wider">
-                          DELL Technologies
-                        </span>
-                        {selectedVendor === 'DELL' && (
-                          <span className="w-5 h-5 rounded-full bg-indigo-600 text-white flex items-center justify-center">
-                            <Check className="w-3.5 h-3.5" />
-                          </span>
-                        )}
-                      </div>
-                      <h3 className="text-sm font-bold text-slate-900">DELL PowerEdge (OpenManage Enterprise)</h3>
-                      <p className="text-xs text-slate-600 leading-relaxed">
-                        Full workflow into <strong>DELL OpenManage Enterprise (OME)</strong>: Device discovery, deployment template binding, BOSS-S1/S2 or PERC RAID 1 boot mirror provisioning, Dell Customized ESXi ISO mapping, unattended kickstart, and Dell iDRAC Service Module (iSM) auto-injection.
-                      </p>
-                    </div>
-                    <div className="mt-4 pt-3 border-t border-slate-200/60 flex items-center justify-between text-[11px] text-slate-500">
-                      <span>Supported: R750, R650, R740xd, MX750c</span>
-                      <span className="font-semibold text-blue-700">iDRAC9 / iDRAC8</span>
-                    </div>
-                  </div>
-
-                  <div
-                    onClick={() => handleVendorSwitch('LENOVO')}
-                    className={`cursor-pointer rounded-xl p-5 border-2 transition-all flex flex-col justify-between ${
-                      selectedVendor === 'LENOVO'
-                        ? 'border-indigo-600 bg-indigo-50/40 ring-2 ring-indigo-500/20'
-                        : 'border-slate-200 hover:border-slate-300 bg-white'
-                    }`}
-                  >
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-emerald-100 text-emerald-800 uppercase tracking-wider">
-                          Lenovo Enterprise
-                        </span>
-                        {selectedVendor === 'LENOVO' && (
-                          <span className="w-5 h-5 rounded-full bg-indigo-600 text-white flex items-center justify-center">
-                            <Check className="w-3.5 h-3.5" />
-                          </span>
-                        )}
-                      </div>
-                      <h3 className="text-sm font-bold text-slate-900">Lenovo ThinkSystem (LXCA)</h3>
-                      <p className="text-xs text-slate-600 leading-relaxed">
-                        Full workflow with <strong>Lenovo XClarity Administrator (LXCA)</strong>: Server Configuration Pattern assignment (UEFI Only, Secure Boot, IOMMU), M.2 NVMe RAID 1 or ThinkSystem RAID adapter volume creation, Lenovo Custom ESXi ISO, and Lenovo CIM/XCC Agent integration.
-                      </p>
-                    </div>
-                    <div className="mt-4 pt-3 border-t border-slate-200/60 flex items-center justify-between text-[11px] text-slate-500">
-                      <span>Supported: SR650 V2/V3, SR630 V2, SR670</span>
-                      <span className="font-semibold text-emerald-700">XCC / XCC2</span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Pre-fill from existing registered inventory */}
-                <div className="bg-slate-50 rounded-xl p-4 border border-slate-200 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <label className="text-xs font-semibold text-slate-800">
-                      Select Server from Existing Fleet (Optional)
-                    </label>
-                    <span className="text-[11px] text-slate-500">
-                      {servers.length} servers in inventory
-                    </span>
-                  </div>
-
-                  <select
-                    id="select-existing-baremetal-server"
-                    value={selectedExistingServerId}
-                    onChange={(e) => handleExistingServerChange(e.target.value)}
-                    className="w-full text-xs rounded-lg border-slate-300 bg-white p-2 text-slate-800 focus:border-indigo-500 focus:ring-indigo-500"
-                  >
-                    <option value="">-- Register a new bare-metal server below or select existing --</option>
-                    {servers.map(s => (
-                      <option key={s.id} value={s.id}>
-                        {s.hostname} — {s.vendor} {s.model} (BMC: {s.bmcIp}, Current OS: {s.hypervisor})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* Hardware Identity Form */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2">
-                  <div>
-                    <label className="block text-xs font-medium text-slate-700 mb-1">
-                      Server Hostname
-                    </label>
-                    <input
-                      type="text"
-                      id="input-baremetal-hostname"
-                      value={hardwareForm.hostname}
-                      onChange={e => {
-                        const val = e.target.value;
-                        setHardwareForm(p => ({ ...p, hostname: val }));
-                        updateNetworkProfile({ hostname: val });
-                      }}
-                      className="w-full text-xs rounded-lg border-slate-300 p-2 text-slate-800 focus:border-indigo-500 focus:ring-indigo-500 font-mono"
-                      placeholder="e.g. esx-r750-01.corp.internal"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-medium text-slate-700 mb-1">
-                      Hardware Model
-                    </label>
-                    <input
-                      type="text"
-                      id="input-baremetal-model"
-                      value={hardwareForm.model}
-                      onChange={e => setHardwareForm(p => ({ ...p, model: e.target.value }))}
-                      className="w-full text-xs rounded-lg border-slate-300 p-2 text-slate-800 focus:border-indigo-500 focus:ring-indigo-500"
-                      placeholder="e.g. Dell PowerEdge R750 or ThinkSystem SR650"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-medium text-slate-700 mb-1">
-                      Out-of-Band BMC IP ({selectedVendor === 'DELL' ? 'iDRAC' : 'XCC'})
-                    </label>
-                    <input
-                      type="text"
-                      id="input-baremetal-bmcip"
-                      value={hardwareForm.bmcIp}
-                      onChange={e => setHardwareForm(p => ({ ...p, bmcIp: e.target.value }))}
-                      className="w-full text-xs rounded-lg border-slate-300 p-2 text-slate-800 focus:border-indigo-500 focus:ring-indigo-500 font-mono"
-                      placeholder="e.g. 192.168.10.120"
-                    />
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-end pt-4 border-t border-slate-200">
-                  <button
-                    type="button"
-                    id="btn-wizard-step1-next"
-                    onClick={() => setWizardStep(2)}
-                    className="px-4 py-2 rounded-lg bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-700 transition-colors flex items-center gap-1.5"
-                  >
-                    <span>Next: Configure {selectedVendor === 'DELL' ? 'Dell OpenManage' : 'Lenovo LXCA'}</span>
-                    <ChevronRight className="w-4 h-4" />
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* STEP 2: VENDOR ORCHESTRATOR CONFIGURATION */}
-            {wizardStep === 2 && (
-              <div className="space-y-6 max-w-4xl">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className={`px-2 py-0.5 rounded text-[11px] font-bold ${
-                      selectedVendor === 'DELL' ? 'bg-blue-100 text-blue-800' : 'bg-emerald-100 text-emerald-800'
-                    }`}>
-                      {selectedVendor === 'DELL' ? 'DELL OPENMANAGE ENTERPRISE' : 'LENOVO XCLARITY ADMINISTRATOR'}
-                    </span>
-                    <h2 className="text-base font-bold text-slate-900">
-                      {selectedVendor === 'DELL' ? 'Dell OpenManage Workflow Configuration' : 'Lenovo LXCA Workflow Configuration'}
-                    </h2>
-                  </div>
-                  <p className="text-xs text-slate-500 mt-0.5">
-                    {selectedVendor === 'DELL'
-                      ? 'Configure the OpenManage Enterprise (OME) appliance connection, deployment template, BOSS-S1/S2 RAID controller, and Dell Customized VMware ESXi image.'
-                      : 'Configure the Lenovo XClarity Administrator (LXCA) connection, Server Configuration Pattern, boot storage target, and Lenovo Custom ESXi image.'}
-                  </p>
-                </div>
-
-                {/* DELL OPENMANAGE WORKFLOW FORM */}
-                {selectedVendor === 'DELL' && (
-                  <div className="space-y-5">
-                    {/* OME Appliance Connection */}
-                    <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
-                      <div className="flex items-center gap-2 text-xs font-bold text-slate-800">
-                        <Globe className="w-4 h-4 text-blue-600" />
-                        <span>Dell OpenManage Enterprise (OME) Appliance Connection</span>
-                      </div>
-
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
-                        <div>
-                          <label className="block text-slate-600 mb-1">OME Appliance Host / IP</label>
-                          <input
-                            type="text"
-                            value={dellConfig.omeHost}
-                            onChange={e => setDellConfig(p => ({ ...p, omeHost: e.target.value }))}
-                            className="w-full rounded-lg border-slate-300 p-2 font-mono"
-                            placeholder="ome.datacenter.corp"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-slate-600 mb-1">OME Username</label>
-                          <input
-                            type="text"
-                            value={dellConfig.omeUsername}
-                            onChange={e => setDellConfig(p => ({ ...p, omeUsername: e.target.value }))}
-                            className="w-full rounded-lg border-slate-300 p-2 font-mono"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-slate-600 mb-1">Target Device Group</label>
-                          <input
-                            type="text"
-                            value={dellConfig.deviceGroupName}
-                            onChange={e => setDellConfig(p => ({ ...p, deviceGroupName: e.target.value }))}
-                            className="w-full rounded-lg border-slate-300 p-2"
-                          />
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Template & Storage Target */}
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-800 mb-1">
-                          OME Server Deployment Template
-                        </label>
-                        <select
-                          value={dellConfig.templateId}
-                          onChange={e => {
-                            const val = e.target.value;
-                            const tpl = catalog?.dell?.templates?.find((t: any) => t.id === val);
-                            setDellConfig(p => ({
-                              ...p,
-                              templateId: val,
-                              templateName: tpl ? tpl.name : p.templateName
-                            }));
-                          }}
-                          className="w-full text-xs rounded-lg border-slate-300 p-2"
-                        >
-                          <option value="ome-tpl-01">Dell PowerEdge 15G/16G ESXi 8.0 Deployment Template</option>
-                          <option value="ome-tpl-02">Dell PowerEdge 14G/15G ESXi 7.0U3 Enterprise Template</option>
-                        </select>
-                        <p className="text-[11px] text-slate-500 mt-1">
-                          Applies UEFI Secure Boot, VT-x/AMD-V virtualization, SR-IOV, and Maximum Performance system profile.
-                        </p>
-                      </div>
-
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-800 mb-1">
-                          Target OS Boot Device (RAID Mirror)
-                        </label>
-                        <select
-                          value={dellConfig.targetBootDevice}
-                          onChange={e => setDellConfig(p => ({ ...p, targetBootDevice: e.target.value as any }))}
-                          className="w-full text-xs rounded-lg border-slate-300 p-2"
-                        >
-                          <option value="BOSS-S2_RAID1">BOSS-S2 Controller RAID 1 (Dual M.2 NVMe SSDs)</option>
-                          <option value="BOSS-S1_RAID1">BOSS-S1 Controller RAID 1 (Dual M.2 SATA SSDs)</option>
-                          <option value="PERC_H755_RAID1">PERC H755 Front RAID 1 (VD0 on 2.5" Bay 0/1)</option>
-                          <option value="PERC_H740P_RAID1">PERC H740P Mini RAID 1 (Legacy 14G)</option>
-                          <option value="FIRST_DISK">First Detected Local Physical Disk</option>
-                        </select>
-                        <p className="text-[11px] text-slate-500 mt-1">
-                          Dell Boot Optimized Storage Solution (BOSS) dedicated dual M.2 RAID 1 volume for hypervisor OS.
-                        </p>
-                      </div>
-                    </div>
-
-                    {/* Dell Customized ESXi ISO */}
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-800 mb-1">
-                        Dell Customized VMware ESXi ISO Image
-                      </label>
-                      <select
-                        value={dellConfig.dellCustomizedIso}
-                        onChange={e => setDellConfig(p => ({ ...p, dellCustomizedIso: e.target.value }))}
-                        className="w-full text-xs rounded-lg border-slate-300 p-2 font-mono text-slate-800"
-                      >
-                        <option value="VMware-VMvisor-Installer-8.0U2-Dell-Customized-A01.iso">
-                          VMware-VMvisor-Installer-8.0U2-Dell-Customized-A01.iso (Build 22380479 - Dell Addon A01)
-                        </option>
-                        <option value="VMware-VMvisor-Installer-7.0U3-Dell-Customized-A04.iso">
-                          VMware-VMvisor-Installer-7.0U3-Dell-Customized-A04.iso (Build 20842708 - Dell Addon A04)
-                        </option>
-                      </select>
-                      <p className="text-[11px] text-slate-500 mt-1">
-                        Includes certified Broadcom, QLogic, Intel NIC drivers, PERC storage drivers, and Dell platform management VIBs.
-                      </p>
-                    </div>
-
-                    {/* Dell Specific Management Options */}
-                    <div className="bg-slate-50 rounded-xl p-4 border border-slate-200 space-y-3">
-                      <h4 className="text-xs font-bold text-slate-800">Dell Management Agent Automations</h4>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
-                        <label className="flex items-center gap-2 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={dellConfig.installIsmAgent}
-                            onChange={e => setDellConfig(p => ({ ...p, installIsmAgent: e.target.checked }))}
-                            className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                          />
-                          <span>Inject Dell iDRAC Service Module (iSM v5.1.0)</span>
-                        </label>
-
-                        <label className="flex items-center gap-2 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={dellConfig.installOmsaVib}
-                            onChange={e => setDellConfig(p => ({ ...p, installOmsaVib: e.target.checked }))}
-                            className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                          />
-                          <span>Install OpenManage Server Administrator (OMSA) VIB</span>
-                        </label>
-
-                        <label className="flex items-center gap-2 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={dellConfig.autoRegisterOmeInventory}
-                            onChange={e => setDellConfig(p => ({ ...p, autoRegisterOmeInventory: e.target.checked }))}
-                            className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                          />
-                          <span>Reconcile OME Device Inventory after installation</span>
-                        </label>
-
-                        <label className="flex items-center gap-2 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={dellConfig.sriovEnabled}
-                            onChange={e => setDellConfig(p => ({ ...p, sriovEnabled: e.target.checked }))}
-                            className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                          />
-                          <span>Enable SR-IOV Global BIOS flag</span>
-                        </label>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* LENOVO LXCA WORKFLOW FORM */}
-                {selectedVendor === 'LENOVO' && (
-                  <div className="space-y-5">
-                    {/* LXCA Appliance Connection */}
-                    <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
-                      <div className="flex items-center gap-2 text-xs font-bold text-slate-800">
-                        <Globe className="w-4 h-4 text-emerald-600" />
-                        <span>Lenovo XClarity Administrator (LXCA) Connection</span>
-                      </div>
-
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
-                        <div>
-                          <label className="block text-slate-600 mb-1">LXCA Appliance Host / IP</label>
-                          <input
-                            type="text"
-                            value={lenovoConfig.lxcaHost}
-                            onChange={e => setLenovoConfig(p => ({ ...p, lxcaHost: e.target.value }))}
-                            className="w-full rounded-lg border-slate-300 p-2 font-mono"
-                            placeholder="lxca.datacenter.corp"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-slate-600 mb-1">LXCA Username</label>
-                          <input
-                            type="text"
-                            value={lenovoConfig.lxcaUsername}
-                            onChange={e => setLenovoConfig(p => ({ ...p, lxcaUsername: e.target.value }))}
-                            className="w-full rounded-lg border-slate-300 p-2 font-mono"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-slate-600 mb-1">Management Endpoint Port</label>
-                          <input
-                            type="number"
-                            value={lenovoConfig.lxcaPort}
-                            onChange={e => setLenovoConfig(p => ({ ...p, lxcaPort: Number(e.target.value) }))}
-                            className="w-full rounded-lg border-slate-300 p-2 font-mono"
-                          />
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Pattern & Storage Target */}
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-800 mb-1">
-                          LXCA Server Configuration Pattern
-                        </label>
-                        <select
-                          value={lenovoConfig.configPatternId}
-                          onChange={e => {
-                            const val = e.target.value;
-                            const pat = catalog?.lenovo?.patterns?.find((p: any) => p.id === val);
-                            setLenovoConfig(p => ({
-                              ...p,
-                              configPatternId: val,
-                              configPatternName: pat ? pat.name : p.configPatternName
-                            }));
-                          }}
-                          className="w-full text-xs rounded-lg border-slate-300 p-2"
-                        >
-                          <option value="lxca-pat-01">Lenovo ThinkSystem SR650/SR630 ESXi 8.0 Enterprise Pattern</option>
-                          <option value="lxca-pat-02">Lenovo ThinkSystem SR650 V2 ESXi 7.0U3 Production Pattern</option>
-                        </select>
-                        <p className="text-[11px] text-slate-500 mt-1">
-                          Configures UEFI Only boot, Intel VT-d / IOMMU, TPM 2.0, and ThinkSystem M.2 RAID mirror.
-                        </p>
-                      </div>
-
-                      <div>
-                        <label className="block text-xs font-semibold text-slate-800 mb-1">
-                          Target Drive Boot Volume
-                        </label>
-                        <select
-                          value={lenovoConfig.targetBootDevice}
-                          onChange={e => setLenovoConfig(p => ({ ...p, targetBootDevice: e.target.value as any }))}
-                          className="w-full text-xs rounded-lg border-slate-300 p-2"
-                        >
-                          <option value="M2_RAID1">ThinkSystem M.2 NVMe RAID 1 Boot Drive</option>
-                          <option value="RAID_930_8i_VD0">ThinkSystem RAID 930-8i Virtual Drive 0</option>
-                          <option value="RAID_530_8i_VD0">ThinkSystem RAID 530-8i Virtual Drive 0</option>
-                          <option value="FIRST_DRIVE">First Detected Physical Boot Drive</option>
-                        </select>
-                        <p className="text-[11px] text-slate-500 mt-1">
-                          Dedicated hardware-managed redundant boot target for ESXi hypervisor partitions.
-                        </p>
-                      </div>
-                    </div>
-
-                    {/* Lenovo Customized ESXi ISO */}
-                    <div>
-                      <label className="block text-xs font-semibold text-slate-800 mb-1">
-                        Lenovo Customized VMware ESXi ISO Image
-                      </label>
-                      <select
-                        value={lenovoConfig.lenovoCustomizedIso}
-                        onChange={e => setLenovoConfig(p => ({ ...p, lenovoCustomizedIso: e.target.value }))}
-                        className="w-full text-xs rounded-lg border-slate-300 p-2 font-mono text-slate-800"
-                      >
-                        <option value="VMware-VMvisor-Installer-8.0U2-Lenovo-ThinkSystem-v1.4.iso">
-                          VMware-VMvisor-Installer-8.0U2-Lenovo-ThinkSystem-v1.4.iso (Build 22380479 - Lenovo v1.4)
-                        </option>
-                        <option value="VMware-VMvisor-Installer-7.0U3-Lenovo-v1.2.iso">
-                          VMware-VMvisor-Installer-7.0U3-Lenovo-v1.2.iso (Build 20842708 - Lenovo v1.2)
-                        </option>
-                      </select>
-                      <p className="text-[11px] text-slate-500 mt-1">
-                        Certified Lenovo image including Mellanox ConnectX, Intel E810, and ThinkSystem storage adapter drivers.
-                      </p>
-                    </div>
-
-                    {/* Lenovo Management Options */}
-                    <div className="bg-slate-50 rounded-xl p-4 border border-slate-200 space-y-3">
-                      <h4 className="text-xs font-bold text-slate-800">Lenovo XClarity Integration Options</h4>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
-                        <label className="flex items-center gap-2 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={lenovoConfig.enableXccAgentProvider}
-                            onChange={e => setLenovoConfig(p => ({ ...p, enableXccAgentProvider: e.target.checked }))}
-                            className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                          />
-                          <span>Enable Lenovo XCC Agent & CIM Provider</span>
-                        </label>
-
-                        <label className="flex items-center gap-2 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={lenovoConfig.autoManageInLxca}
-                            onChange={e => setLenovoConfig(p => ({ ...p, autoManageInLxca: e.target.checked }))}
-                            className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                          />
-                          <span>Auto-register as "Managed - Online" in LXCA inventory</span>
-                        </label>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                <div className="flex items-center justify-between pt-4 border-t border-slate-200">
-                  <button
-                    type="button"
-                    id="btn-wizard-step2-back"
-                    onClick={() => setWizardStep(1)}
-                    className="px-4 py-2 rounded-lg border border-slate-300 text-slate-700 text-xs font-semibold hover:bg-slate-50 transition-colors"
-                  >
-                    Back
-                  </button>
-
-                  <button
-                    type="button"
-                    id="btn-wizard-step2-next"
-                    onClick={() => setWizardStep(3)}
-                    className="px-4 py-2 rounded-lg bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-700 transition-colors flex items-center gap-1.5"
-                  >
-                    <span>Next: ESXi Kickstart & Network</span>
-                    <ChevronRight className="w-4 h-4" />
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* STEP 3: KICKSTART & NETWORK PROFILE */}
-            {wizardStep === 3 && (
-              <div className="space-y-6 max-w-4xl">
-                <div>
-                  <h2 className="text-base font-bold text-slate-900">Unattended Kickstart (ks.cfg) & Network Topology</h2>
-                  <p className="text-xs text-slate-500 mt-0.5">
-                    Define the VMware ESXi management IP, root credentials, VLAN tagging, and post-installation automation flags.
-                  </p>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {/* IP Allocation Mode */}
-                  <div>
-                    <label className="block text-xs font-medium text-slate-700 mb-1">
-                      IP Allocation Mode
-                    </label>
-                    <div className="flex items-center gap-3 pt-1">
-                      <label className="flex items-center gap-2 text-xs cursor-pointer">
-                        <input
-                          type="radio"
-                          name="ipMode"
-                          checked={!currentNetworkProfile.useDhcp}
-                          onChange={() => updateNetworkProfile({ useDhcp: false })}
-                          className="text-indigo-600 focus:ring-indigo-500"
-                        />
-                        <span className="font-semibold text-slate-800">Static Management IP (Recommended)</span>
-                      </label>
-
-                      <label className="flex items-center gap-2 text-xs cursor-pointer">
-                        <input
-                          type="radio"
-                          name="ipMode"
-                          checked={currentNetworkProfile.useDhcp}
-                          onChange={() => updateNetworkProfile({ useDhcp: true })}
-                          className="text-indigo-600 focus:ring-indigo-500"
-                        />
-                        <span className="text-slate-700">DHCP Autoconfiguration</span>
-                      </label>
-                    </div>
-                  </div>
-
-                  {/* VLAN ID */}
-                  <div>
-                    <label className="block text-xs font-medium text-slate-700 mb-1">
-                      Management VLAN ID (vmk0)
-                    </label>
-                    <input
-                      type="number"
-                      value={currentNetworkProfile.managementVlan ?? 0}
-                      onChange={e => updateNetworkProfile({ managementVlan: Number(e.target.value) })}
-                      className="w-full text-xs rounded-lg border-slate-300 p-2 font-mono"
-                      placeholder="e.g. 100 (0 for Untagged)"
-                    />
-                  </div>
-                </div>
-
-                {!currentNetworkProfile.useDhcp && (
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 bg-slate-50 p-4 rounded-xl border border-slate-200">
-                    <div>
-                      <label className="block text-xs font-medium text-slate-700 mb-1">
-                        ESXi Host Static IP
-                      </label>
-                      <input
-                        type="text"
-                        value={currentNetworkProfile.staticIp || ''}
-                        onChange={e => {
-                          updateNetworkProfile({ staticIp: e.target.value });
-                          setVerifyTargetIp(e.target.value);
-                        }}
-                        className="w-full text-xs rounded-lg border-slate-300 p-2 font-mono"
-                        placeholder="192.168.10.201"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-medium text-slate-700 mb-1">
-                        Subnet Mask
-                      </label>
-                      <input
-                        type="text"
-                        value={currentNetworkProfile.subnetMask || '255.255.255.0'}
-                        onChange={e => updateNetworkProfile({ subnetMask: e.target.value })}
-                        className="w-full text-xs rounded-lg border-slate-300 p-2 font-mono"
-                        placeholder="255.255.255.0"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-medium text-slate-700 mb-1">
-                        Default Gateway
-                      </label>
-                      <input
-                        type="text"
-                        value={currentNetworkProfile.gateway || '192.168.10.1'}
-                        onChange={e => updateNetworkProfile({ gateway: e.target.value })}
-                        className="w-full text-xs rounded-lg border-slate-300 p-2 font-mono"
-                        placeholder="192.168.10.1"
-                      />
-                    </div>
-
-                    <div className="md:col-span-2">
-                      <label className="block text-xs font-medium text-slate-700 mb-1">
-                        DNS Servers
-                      </label>
-                      <input
-                        type="text"
-                        value={currentNetworkProfile.dnsServers || ''}
-                        onChange={e => updateNetworkProfile({ dnsServers: e.target.value })}
-                        className="w-full text-xs rounded-lg border-slate-300 p-2 font-mono"
-                        placeholder="192.168.10.10, 192.168.10.11"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-medium text-slate-700 mb-1">
-                        NTP Servers
-                      </label>
-                      <input
-                        type="text"
-                        value={currentNetworkProfile.ntpServers || ''}
-                        onChange={e => updateNetworkProfile({ ntpServers: e.target.value })}
-                        className="w-full text-xs rounded-lg border-slate-300 p-2 font-mono"
-                        placeholder="time.corp.internal"
-                      />
-                    </div>
-                  </div>
-                )}
-
-                {/* Root Password & Security */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-xs font-medium text-slate-700 mb-1">
-                      ESXi Host Root Password
-                    </label>
-                    <div className="relative">
-                      <input
-                        type={showPassword ? 'text' : 'password'}
-                        value={currentNetworkProfile.rootPassword || ''}
-                        onChange={e => updateNetworkProfile({ rootPassword: e.target.value })}
-                        className="w-full text-xs rounded-lg border-slate-300 p-2 pr-10 font-mono"
-                        placeholder="Enter root password"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowPassword(!showPassword)}
-                        className="absolute right-2.5 top-2 text-slate-400 hover:text-slate-600 text-xs"
-                      >
-                        {showPassword ? 'Hide' : 'Show'}
-                      </button>
-                    </div>
-                    <p className="text-[11px] text-slate-500 mt-1">
-                      Will be cryptographically hashed and embedded in ks.cfg unattended install.
-                    </p>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-medium text-slate-700 mb-1">
-                      Post-Install Host Access
-                    </label>
-                    <div className="space-y-2 pt-1 text-xs">
-                      <label className="flex items-center gap-2 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={currentNetworkProfile.enableSsh}
-                          onChange={e => updateNetworkProfile({ enableSsh: e.target.checked })}
-                          className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                        />
-                        <span>Enable ESXi Shell & SSH Service on boot</span>
-                      </label>
-
-                      <label className="flex items-center gap-2 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={currentNetworkProfile.enableEsxiShell}
-                          onChange={e => updateNetworkProfile({ enableEsxiShell: e.target.checked })}
-                          className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
-                        />
-                        <span>Enable Direct Console User Interface (DCUI) Web Client</span>
-                      </label>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-between pt-4 border-t border-slate-200">
-                  <button
-                    type="button"
-                    id="btn-wizard-step3-back"
-                    onClick={() => setWizardStep(2)}
-                    className="px-4 py-2 rounded-lg border border-slate-300 text-slate-700 text-xs font-semibold hover:bg-slate-50 transition-colors"
-                  >
-                    Back
-                  </button>
-
-                  <button
-                    type="button"
-                    id="btn-wizard-step3-next"
-                    onClick={() => setWizardStep(4)}
-                    className="px-4 py-2 rounded-lg bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-700 transition-colors flex items-center gap-1.5"
-                  >
-                    <span>Review & Launch Deployment</span>
-                    <ChevronRight className="w-4 h-4" />
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* STEP 4: PREFLIGHT & LAUNCH */}
-            {wizardStep === 4 && (
-              <div className="space-y-6 max-w-4xl">
-                <div>
-                  <h2 className="text-base font-bold text-slate-900">Pre-Deployment Verification & Launch</h2>
-                  <p className="text-xs text-slate-500 mt-0.5">
-                    Review the end-to-end bare-metal deployment configuration before triggering automated orchestration.
-                  </p>
-                </div>
-
-                {/* Summary Card */}
-                <div className="bg-slate-50 rounded-xl p-5 border border-slate-200 divide-y divide-slate-200 space-y-4">
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pb-2">
-                    <div>
-                      <span className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold">Vendor Orchestrator</span>
-                      <p className="text-sm font-bold text-slate-900 mt-0.5">
-                        {selectedVendor === 'DELL' ? 'Dell OpenManage Enterprise' : 'Lenovo XClarity Administrator'}
-                      </p>
-                      <p className="text-xs text-slate-600 mt-0.5">
-                        Appliance: {selectedVendor === 'DELL' ? dellConfig.omeHost : lenovoConfig.lxcaHost}
-                      </p>
-                    </div>
-
-                    <div>
-                      <span className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold">Target Node</span>
-                      <p className="text-sm font-bold text-slate-900 mt-0.5 font-mono">
-                        {hardwareForm.hostname}
-                      </p>
-                      <p className="text-xs text-slate-600 mt-0.5">
-                        {hardwareForm.model} (BMC: {hardwareForm.bmcIp})
-                      </p>
-                    </div>
-
-                    <div>
-                      <span className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold">ESXi Target IP</span>
-                      <p className="text-sm font-bold text-indigo-700 mt-0.5 font-mono">
-                        {currentNetworkProfile.staticIp || 'DHCP'}
-                      </p>
-                      <p className="text-xs text-slate-600 mt-0.5">
-                        VLAN {currentNetworkProfile.managementVlan || 'Untagged (0)'}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="pt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <span className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold">Boot Storage Target</span>
-                      <p className="text-xs font-semibold text-slate-800 mt-0.5">
-                        {selectedVendor === 'DELL' ? dellConfig.targetBootDevice : lenovoConfig.targetBootDevice}
-                      </p>
-                      <p className="text-[11px] text-slate-500">
-                        RAID 1 mirror created via Redfish storage job before installer launch.
-                      </p>
-                    </div>
-
-                    <div>
-                      <span className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold">Customized VMware ISO</span>
-                      <p className="text-xs font-mono font-semibold text-slate-800 mt-0.5 truncate">
-                        {selectedVendor === 'DELL' ? dellConfig.dellCustomizedIso : lenovoConfig.lenovoCustomizedIso}
-                      </p>
-                      <p className="text-[11px] text-slate-500">
-                        Mapped over Virtual Media to host virtual optical drive.
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Preflight Checks Matrix */}
-                  <div className="pt-4 space-y-2">
-                    <span className="text-[11px] uppercase tracking-wider text-slate-500 font-semibold">Pre-Flight Readiness Status</span>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
-                      <div className="flex items-center gap-2 p-2 bg-white rounded-lg border border-slate-200">
-                        <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                        <span>Out-of-Band BMC Reachable ({hardwareForm.bmcIp}:443)</span>
-                      </div>
-                      <div className="flex items-center gap-2 p-2 bg-white rounded-lg border border-slate-200">
-                        <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                        <span>Management Console Connected ({selectedVendor === 'DELL' ? 'OME' : 'LXCA'})</span>
-                      </div>
-                      <div className="flex items-center gap-2 p-2 bg-white rounded-lg border border-slate-200">
-                        <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                        <span>Custom ESXi ISO Image Certified & Checksum Validated</span>
-                      </div>
-                      <div className="flex items-center gap-2 p-2 bg-white rounded-lg border border-slate-200">
-                        <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                        <span>Kickstart Script (ks.cfg) Syntax Verified</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-between pt-4 border-t border-slate-200">
-                  <button
-                    type="button"
-                    id="btn-wizard-step4-back"
-                    onClick={() => setWizardStep(3)}
-                    className="px-4 py-2 rounded-lg border border-slate-300 text-slate-700 text-xs font-semibold hover:bg-slate-50 transition-colors"
-                  >
-                    Back
-                  </button>
-
-                  <button
-                    type="button"
-                    id="btn-launch-baremetal-deployment"
-                    onClick={handleStartDeployment}
-                    className="px-5 py-2.5 rounded-lg bg-indigo-600 text-white text-xs font-semibold hover:bg-indigo-700 transition-colors flex items-center gap-2 shadow-sm"
-                  >
-                    <Play className="w-4 h-4 fill-current" />
-                    <span>Launch Bare-Metal VMware ESXi Deployment</span>
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
+        <BaremetalWizardView
+          servers={servers}
+          catalog={catalog}
+          selectedExistingServerId={selectedExistingServerId}
+          setSelectedExistingServerId={handleExistingServerChange}
+          selectedVendor={selectedVendor}
+          setSelectedVendor={handleVendorSwitch}
+          hardwareForm={hardwareForm}
+          setHardwareForm={setHardwareForm}
+          dellConfig={dellConfig}
+          setDellConfig={setDellConfig}
+          lenovoConfig={lenovoConfig}
+          setLenovoConfig={setLenovoConfig}
+          currentNetworkProfile={currentNetworkProfile}
+          updateNetworkProfile={updateNetworkProfile}
+          onStartDeployment={handleStartDeployment}
+          ritmNumber={ritmNumber}
+          setRitmNumber={setRitmNumber}
+          esxiName={esxiName}
+          setEsxiName={setEsxiName}
+          hostIp={hostIp}
+          setHostIp={setHostIp}
+          hostMask={hostMask}
+          setHostMask={setHostMask}
+          vmotionIp={vmotionIp}
+          setVmotionIp={setVmotionIp}
+          vmotionMask={vmotionMask}
+          setVmotionMask={setVmotionMask}
+          selectedDnsIps={selectedDnsIps}
+          setSelectedDnsIps={setSelectedDnsIps}
+          selectedIsoName={selectedIsoName}
+          setSelectedIsoName={setSelectedIsoName}
+          gatewayIp={gatewayIp}
+          setGatewayIp={setGatewayIp}
+          vlanId={vlanId}
+          setVlanId={setVlanId}
+        />
       )}
 
       {/* SUB-VIEW 2: ACTIVE ORCHESTRATION & STREAMING CONSOLE LOGS */}

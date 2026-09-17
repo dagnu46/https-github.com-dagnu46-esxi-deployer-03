@@ -459,10 +459,13 @@ export type BaremetalVendor = 'DELL' | 'LENOVO';
 
 export interface BaremetalNetworkProfile {
   hostname: string;
+  ritmNumber?: string;
   useDhcp: boolean;
   staticIp?: string;
   subnetMask?: string;
   gateway?: string;
+  vmotionIp?: string;
+  vmotionMask?: string;
   dnsServers?: string;
   ntpServers?: string;
   managementVlan?: number;
@@ -573,12 +576,16 @@ export interface PostInstallEsxiValidation {
 
 export interface BaremetalEsxiDeploymentJob {
   id: string;
+  ritmNumber?: string;
   serverId: string;
   serverHostname: string;
   vendor: BaremetalVendor;
   model: string;
   bmcIp: string;
   esxiVersion: string; // "8.0U2" or "7.0U3"
+  esxiIsoName?: string;
+  vmotionIp?: string;
+  vmotionMask?: string;
   status: 'pending' | 'in_progress' | 'installed' | 'failed' | 'cancelled';
   stage: BaremetalDeployStage;
   currentStepMessage: string;

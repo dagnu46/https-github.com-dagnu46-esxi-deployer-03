@@ -2948,12 +2948,16 @@ async function startServer() {
 
   interface BaremetalJobInternal {
     id: string;
+    ritmNumber?: string;
     serverId: string;
     serverHostname: string;
     vendor: 'DELL' | 'LENOVO';
     model: string;
     bmcIp: string;
     esxiVersion: string;
+    esxiIsoName?: string;
+    vmotionIp?: string;
+    vmotionMask?: string;
     status: 'pending' | 'in_progress' | 'installed' | 'failed' | 'cancelled';
     stage: string;
     currentStepMessage: string;
@@ -3128,12 +3132,16 @@ async function startServer() {
   app.post('/api/baremetal/deploy', (req, res) => {
     try {
       const {
+        ritmNumber,
         serverId,
         serverHostname,
         vendor,
         model,
         bmcIp,
         esxiVersion = '8.0U2',
+        esxiIsoName,
+        vmotionIp,
+        vmotionMask,
         targetManagementIp,
         dellConfig,
         lenovoConfig,
@@ -3152,19 +3160,23 @@ async function startServer() {
           timestamp: startTime,
           level: 'info' as const,
           source: (vendor === 'DELL' ? 'OME' : 'LXCA') as any,
-          message: `Initiated Bare-Metal VMware ESXi ${esxiVersion} deployment orchestrator for [${serverHostname || bmcIp}]`,
-          details: `Target Hardware: ${model || 'Baremetal Node'} (BMC IP: ${bmcIp}). Management Console: ${vendor === 'DELL' ? 'Dell OpenManage Enterprise (OME)' : 'Lenovo XClarity Administrator (LXCA)'}`
+          message: `Initiated Bare-Metal VMware ESXi ${esxiVersion} deployment orchestrator for [${serverHostname || bmcIp}] ${ritmNumber ? `(Change Ref: ${ritmNumber})` : ''}`,
+          details: `Target Hardware: ${model || 'Baremetal Node'} (BMC IP: ${bmcIp}). Management Console: ${vendor === 'DELL' ? 'Dell OpenManage Enterprise (OME)' : 'Lenovo XClarity Administrator (LXCA)'}. vMotion: ${vmotionIp || 'Not configured'}`
         }
       ];
 
       const newJob: BaremetalJobInternal = {
         id: jobId,
+        ritmNumber: ritmNumber || networkProfile?.ritmNumber,
         serverId: serverId || `srv-bm-${Date.now()}`,
         serverHostname: serverHostname || (networkProfile?.hostname || `esx-node-${Date.now().toString(36).substring(0, 4)}`),
         vendor,
         model: model || (vendor === 'DELL' ? 'Dell PowerEdge R750' : 'Lenovo ThinkSystem SR650 V2'),
         bmcIp: bmcIp || '192.168.10.150',
         esxiVersion,
+        esxiIsoName: esxiIsoName || (vendor === 'DELL' ? dellConfig?.dellCustomizedIso : lenovoConfig?.lenovoCustomizedIso),
+        vmotionIp: vmotionIp || networkProfile?.vmotionIp,
+        vmotionMask: vmotionMask || networkProfile?.vmotionMask,
         status: 'in_progress',
         stage: 'discovery',
         currentStepMessage: vendor === 'DELL'

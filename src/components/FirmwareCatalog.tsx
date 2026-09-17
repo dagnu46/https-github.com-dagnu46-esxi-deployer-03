@@ -354,13 +354,14 @@ export const FirmwareCatalog: React.FC<FirmwareCatalogProps> = ({
 
   const filteredPackages = packages.filter(p => {
     if (selectedComponentFilter !== 'all' && p.component !== selectedComponentFilter) return false;
-    if (modelFilter !== 'all' && !p.supportedModels.includes(modelFilter as ServerModel)) return false;
+    const supported = Array.isArray(p.supportedModels) ? p.supportedModels : [];
+    if (modelFilter !== 'all' && !supported.includes(modelFilter as ServerModel)) return false;
     if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      const matchName = p.name.toLowerCase().includes(q);
-      const matchVer = p.version.toLowerCase().includes(q);
-      const matchVendor = p.vendor.toLowerCase().includes(q);
-      const matchCve = p.cves.some(c => c.toLowerCase().includes(q));
+      const q = searchQuery.toLowerCase().trim();
+      const matchName = (p.name || '').toLowerCase().includes(q);
+      const matchVer = (p.version || '').toLowerCase().includes(q);
+      const matchVendor = (p.vendor || '').toLowerCase().includes(q);
+      const matchCve = Array.isArray(p.cves) && p.cves.some(c => (c || '').toLowerCase().includes(q));
       if (!matchName && !matchVer && !matchVendor && !matchCve) return false;
     }
     return true;
@@ -1303,7 +1304,7 @@ export const FirmwareCatalog: React.FC<FirmwareCatalogProps> = ({
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
                   {ALL_MODELS.map(model => {
-                    const isChecked = formModels.includes(model);
+                    const isChecked = Array.isArray(formModels) && formModels.includes(model);
                     return (
                       <label
                         key={model}
