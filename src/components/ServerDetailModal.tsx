@@ -102,7 +102,7 @@ export const ServerDetailModal: React.FC<ServerDetailModalProps> = ({
 
     const creds = server.credentials || {
       bmcUsername: 'root',
-      bmcPassword: '••••••••',
+      bmcPassword: '',
       bmcProtocol: server.bmcAffectedType === 'Supermicro IPMI' ? 'ipmi' : 'redfish',
       bmcPort: server.bmcAffectedType === 'Supermicro IPMI' ? 623 : 443,
       ignoreSslErrors: true,
@@ -515,7 +515,7 @@ export const ServerDetailModal: React.FC<ServerDetailModalProps> = ({
                     <div className="flex items-center justify-between py-1 border-b border-slate-50">
                       <span className="text-slate-500">Password:</span>
                       <div className="flex items-center gap-2 font-mono">
-                        <span>{showPassword ? (server.credentials?.bmcPassword || 'P@ssw0rd2026!') : '••••••••••••'}</span>
+                        <span>{showPassword ? (server.credentials?.bmcPassword || '(Not configured)') : '••••••••••••'}</span>
                         <button
                           type="button"
                           onClick={() => setShowPassword(!showPassword)}
@@ -655,10 +655,10 @@ export const ServerDetailModal: React.FC<ServerDetailModalProps> = ({
                 <div className="space-y-1 text-[11px] pt-1 text-slate-300">
                   <p className="text-emerald-400">&gt; GET /redfish/v1/Systems/System.Embedded.1 HTTP/1.1</p>
                   <p className="text-slate-400">&gt; Host: {server.bmcIp}</p>
-                  <p className="text-slate-400">&gt; Authorization: Basic {btoa(`${server.credentials?.bmcUsername || 'root'}:••••••••`)}</p>
+                  <p className="text-slate-400">&gt; Authorization: Basic [REDACTED]</p>
                   <p className="text-indigo-300">&lt; HTTP/1.1 200 OK</p>
                   <p className="text-slate-400">&lt; Content-Type: application/json;charset=utf-8</p>
-                  <p className="text-slate-400">&lt; X-Auth-Token: 4a9f2c18d9e14a2b9101ff</p>
+                  <p className="text-slate-400">&lt; X-Auth-Token: [REDACTED]</p>
                   <div className="bg-slate-900 p-2.5 rounded-md text-[10px] text-slate-300 overflow-x-auto my-2">
                     {JSON.stringify({
                       "@odata.id": "/redfish/v1/Systems/System.Embedded.1",

@@ -11,9 +11,13 @@ import {
   ChevronRight, 
   ChevronLeft,
   Settings,
-  Cpu
+  Cpu,
+  Network,
+  RefreshCw,
+  XCircle
 } from 'lucide-react';
-import { Server, FirmwarePackage, ComponentType, ComponentFirmware } from '../types';
+import { Server, FirmwarePackage, ComponentType, ComponentFirmware, AccessTestResult } from '../types';
+import { testServerAccess } from '../utils/accessTester';
 
 interface UpgradeWizardModalProps {
   isOpen: boolean;
@@ -58,6 +62,67 @@ export const UpgradeWizardModal: React.FC<UpgradeWizardModalProps> = ({
   const [stopOnFailure, setStopOnFailure] = useState<boolean>(true);
   const [preflightChecks, setPreflightChecks] = useState<boolean>(true);
   const [campaignTitle, setCampaignTitle] = useState<string>('');
+
+  // State for IPMI testing per server
+  const [testedAccessMap, setTestedAccessMap] = useState<Record<string, AccessTestResult>>({});
+  const [testingServerId, setTestingServerId] = useState<string | null>(null);
+  const [isTestingAllSelected, setIsTestingAllSelected] = useState<boolean>(false);
+
+  const handleTestSingleServerIpmi = async (server: Server) => {
+    setTestingServerId(server.id);
+    try {
+      const result = await testServerAccess({
+        hostname: server.hostname,
+        ip: server.ip || '',
+        bmcIp: server.bmcIp || server.ip || '',
+        bmcAffectedType: server.bmcAffectedType,
+        model: server.model,
+        credentials: server.credentials || {
+          bmcUsername: 'root',
+          bmcPassword: '',
+          bmcProtocol: server.bmcAffectedType === 'Supermicro IPMI' ? 'ipmi' : 'redfish',
+          bmcPort: server.bmcAffectedType === 'Supermicro IPMI' ? 623 : 443,
+          ignoreSslErrors: true
+        }
+      });
+      setTestedAccessMap(prev => ({ ...prev, [server.id]: result }));
+    } catch {
+      // Ignored
+    } finally {
+      setTestingServerId(null);
+    }
+  };
+
+  const handleTestAllSelectedIpmi = async () => {
+    if (selectedServerIds.length === 0) return;
+    setIsTestingAllSelected(true);
+    for (const id of selectedServerIds) {
+      const s = servers.find(srv => srv.id === id);
+      if (!s) continue;
+      setTestingServerId(id);
+      try {
+        const result = await testServerAccess({
+          hostname: s.hostname,
+          ip: s.ip || '',
+          bmcIp: s.bmcIp || s.ip || '',
+          bmcAffectedType: s.bmcAffectedType,
+          model: s.model,
+          credentials: s.credentials || {
+            bmcUsername: 'root',
+            bmcPassword: '',
+            bmcProtocol: s.bmcAffectedType === 'Supermicro IPMI' ? 'ipmi' : 'redfish',
+            bmcPort: s.bmcAffectedType === 'Supermicro IPMI' ? 623 : 443,
+            ignoreSslErrors: true
+          }
+        });
+        setTestedAccessMap(prev => ({ ...prev, [id]: result }));
+      } catch {
+        // Continue
+      }
+    }
+    setTestingServerId(null);
+    setIsTestingAllSelected(false);
+  };
 
   useEffect(() => {
     if (isOpen) {
@@ -177,18 +242,31 @@ export const UpgradeWizardModal: React.FC<UpgradeWizardModalProps> = ({
           {/* STEP 1: TARGET SERVERS */}
           {step === 1 && (
             <div className="space-y-4">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                 <div>
                   <h3 className="text-sm font-bold text-slate-900">Select Servers for Upgrade</h3>
-                  <p className="text-xs text-slate-500">Pick which physical server nodes will receive the flash job.</p>
+                  <p className="text-xs text-slate-500">Pick which physical server nodes will receive the flash job and verify IPMI credentials.</p>
                 </div>
-                <div className="flex items-center space-x-2">
+                <div className="flex items-center space-x-2 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={handleTestAllSelectedIpmi}
+                    disabled={selectedServerIds.length === 0 || isTestingAllSelected}
+                    className="text-xs px-2.5 py-1 rounded bg-indigo-50 border border-indigo-200 text-indigo-700 hover:bg-indigo-100 font-semibold flex items-center gap-1.5 shadow-2xs disabled:opacity-50"
+                  >
+                    {isTestingAllSelected ? (
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin text-indigo-600" />
+                    ) : (
+                      <ShieldCheck className="w-3.5 h-3.5 text-indigo-600" />
+                    )}
+                    <span>Test IPMI on Selected ({selectedServerIds.length})</span>
+                  </button>
                   <button
                     type="button"
                     onClick={handleSelectAllNeedingUpdate}
                     className="text-xs text-indigo-600 hover:text-indigo-800 font-medium underline"
                   >
-                    Select All Outdated Nodes
+                    Select Outdated
                   </button>
                   <span>•</span>
                   <button
@@ -205,9 +283,8 @@ export const UpgradeWizardModal: React.FC<UpgradeWizardModalProps> = ({
               <div className="divide-y divide-slate-200 border border-slate-200 rounded-xl overflow-hidden max-h-80 overflow-y-auto">
                 {servers.map(server => {
                   const isSelected = selectedServerIds.includes(server.id);
-                  const compStatus = targetComponent !== 'FULL_BASELINE'
-                    ? server.components[targetComponent]?.status
-                    : 'update_available';
+                  const accessStatus = testedAccessMap[server.id] || server.accessStatus;
+                  const isTestingThis = testingServerId === server.id;
 
                   return (
                     <div
@@ -225,7 +302,7 @@ export const UpgradeWizardModal: React.FC<UpgradeWizardModalProps> = ({
                           className="rounded-sm border-slate-300 text-indigo-600 w-4 h-4 cursor-pointer"
                         />
                         <div>
-                          <div className="flex items-center space-x-2">
+                          <div className="flex items-center space-x-2 flex-wrap">
                             <span className="font-bold text-slate-900 font-mono">{server.hostname}</span>
                             <span className={`px-1.5 py-0.2 rounded text-[9px] font-bold ${
                               (server.vendor || (server.model?.includes('Dell') ? 'DELL' : server.model?.includes('Lenovo') ? 'LENOVO' : 'HP')) === 'HP' ? 'bg-emerald-100 text-emerald-800' :
@@ -235,15 +312,23 @@ export const UpgradeWizardModal: React.FC<UpgradeWizardModalProps> = ({
                               {server.vendor || (server.model?.includes('Dell') ? 'DELL' : server.model?.includes('Lenovo') ? 'LENOVO' : 'HP')}
                             </span>
                             <span className="text-[11px] text-slate-500">{server.model}</span>
-                            {server.hypervisorMaintenanceMode ? (
-                              <span className="px-1.5 py-0.2 rounded bg-emerald-100 text-emerald-800 text-[9px] font-semibold">
-                                Evacuated (Safe)
+
+                            {/* IPMI Access Badge */}
+                            {accessStatus?.status === 'success' ? (
+                              <span className="px-1.5 py-0.2 rounded-full bg-emerald-100 text-emerald-800 text-[9px] font-bold flex items-center gap-0.5">
+                                <CheckCircle2 className="w-2.5 h-2.5 text-emerald-600" />
+                                IPMI Verified ({accessStatus.latencyMs || 12}ms)
                               </span>
-                            ) : (server.activeVmsCount || 0) > 0 ? (
-                              <span className="px-1.5 py-0.2 rounded bg-amber-100 text-amber-800 text-[9px] font-medium">
-                                {server.activeVmsCount} VMs Running
+                            ) : accessStatus?.status === 'failed' ? (
+                              <span className="px-1.5 py-0.2 rounded-full bg-red-100 text-red-800 text-[9px] font-bold flex items-center gap-0.5">
+                                <XCircle className="w-2.5 h-2.5 text-red-600" />
+                                IPMI Failed
                               </span>
-                            ) : null}
+                            ) : (
+                              <span className="px-1.5 py-0.2 rounded-full bg-slate-100 text-slate-600 text-[9px] font-medium">
+                                IPMI Untested
+                              </span>
+                            )}
                           </div>
                           <div className="text-[11px] text-slate-500 font-mono flex items-center gap-1.5 mt-0.5">
                             <span className="text-indigo-600 font-medium">
@@ -252,12 +337,31 @@ export const UpgradeWizardModal: React.FC<UpgradeWizardModalProps> = ({
                             <span>•</span>
                             <span>{server.datacenter} ({server.rack})</span>
                             <span>•</span>
-                            <span>BMC: {server.bmcIp}</span>
+                            <span>BMC: {server.bmcIp || 'N/A'}</span>
                           </div>
                         </div>
                       </div>
 
-                      <div className="flex items-center space-x-3 font-mono">
+                      <div className="flex items-center space-x-2 font-mono">
+                        {/* Test IPMI Button for this server */}
+                        <button
+                          type="button"
+                          disabled={isTestingThis || isTestingAllSelected}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleTestSingleServerIpmi(server);
+                          }}
+                          className="px-2 py-1 rounded bg-white hover:bg-slate-100 border border-slate-200 text-slate-700 text-[10px] font-semibold flex items-center gap-1 shadow-2xs transition-colors"
+                          title={`Test IPMI IP & credentials for ${server.hostname}`}
+                        >
+                          {isTestingThis ? (
+                            <RefreshCw className="w-3 h-3 animate-spin text-indigo-600" />
+                          ) : (
+                            <ShieldCheck className="w-3 h-3 text-indigo-600" />
+                          )}
+                          <span>Test IPMI</span>
+                        </button>
+
                         {targetComponent !== 'FULL_BASELINE' && server.components[targetComponent] && (
                           <div className="text-right">
                             <span className="text-slate-500">Current: </span>
@@ -509,6 +613,54 @@ export const UpgradeWizardModal: React.FC<UpgradeWizardModalProps> = ({
                   ))}
                 </div>
               </div>
+
+              {/* IPMI Access Preflight Verification Matrix */}
+              {(() => {
+                const verifiedCount = chosenServers.filter(s => (testedAccessMap[s.id]?.status || s.accessStatus?.status) === 'success').length;
+                const failedCount = chosenServers.filter(s => (testedAccessMap[s.id]?.status || s.accessStatus?.status) === 'failed').length;
+                const untestedCount = chosenServers.length - verifiedCount - failedCount;
+
+                return (
+                  <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <Network className="w-4 h-4 text-indigo-600" />
+                        <h4 className="text-xs font-bold text-slate-900">
+                          Target Servers IPMI / BMC Preflight Verification
+                        </h4>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleTestAllSelectedIpmi}
+                        disabled={isTestingAllSelected}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white border border-indigo-200 text-indigo-700 hover:bg-indigo-50 text-xs font-semibold shadow-2xs transition-colors cursor-pointer disabled:opacity-50"
+                      >
+                        {isTestingAllSelected ? (
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin text-indigo-600" />
+                        ) : (
+                          <ShieldCheck className="w-3.5 h-3.5 text-indigo-600" />
+                        )}
+                        <span>Verify IPMI Access on All ({chosenServers.length})</span>
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-2 text-center text-xs">
+                      <div className="p-2 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-900 font-medium">
+                        <div className="text-base font-bold text-emerald-700">{verifiedCount}</div>
+                        <div className="text-[10px] text-emerald-800">IPMI Verified</div>
+                      </div>
+                      <div className="p-2 rounded-lg bg-red-50 border border-red-200 text-red-900 font-medium">
+                        <div className="text-base font-bold text-red-700">{failedCount}</div>
+                        <div className="text-[10px] text-red-800">Auth Failed</div>
+                      </div>
+                      <div className="p-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 font-medium">
+                        <div className="text-base font-bold text-amber-700">{untestedCount}</div>
+                        <div className="text-[10px] text-amber-800">Untested</div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           )}
         </div>

@@ -38,8 +38,8 @@ services:
     container_name: firmware-hub-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: Dagnu
-      POSTGRES_PASSWORD: 'Dagnu0046!'
+      POSTGRES_USER: \${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: \${POSTGRES_PASSWORD:-}
       POSTGRES_DB: firmware_hub
       POSTGRES_HOST_AUTH_METHOD: trust
     volumes:
@@ -48,7 +48,7 @@ services:
     ports:
       - "5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U Dagnu -d firmware_hub"]
+      test: ["CMD-SHELL", "pg_isready -U \${POSTGRES_USER:-postgres} -d firmware_hub"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -64,9 +64,9 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=3000
-      - DATABASE_URL=postgres://Dagnu:Dagnu0046%21@postgres:5432/firmware_hub
-      - PGUSER=Dagnu
-      - PGPASSWORD=Dagnu0046!
+      - DATABASE_URL=postgres://\${POSTGRES_USER:-postgres}:\${POSTGRES_PASSWORD:-}@postgres:5432/firmware_hub
+      - PGUSER=\${POSTGRES_USER:-postgres}
+      - PGPASSWORD=\${POSTGRES_PASSWORD:-}
       - PGHOST=postgres
       - PGPORT=5432
       - PGDATABASE=firmware_hub
@@ -323,7 +323,7 @@ export const DockerDbModal: React.FC<DockerDbModalProps> = ({
                     <div className="flex justify-between py-1 border-b border-slate-50">
                       <span className="text-slate-500">Connection String:</span>
                       <span className="font-mono text-[11px] text-slate-600 truncate max-w-[200px]" title={status?.connectionStringSanitized}>
-                        {status?.connectionStringSanitized || 'postgres://Dagnu:••••@localhost:5432/firmware_hub'}
+                        {status?.connectionStringSanitized || 'postgres://postgres:••••@localhost:5432/firmware_hub'}
                       </span>
                     </div>
                     <div className="flex justify-between py-1">

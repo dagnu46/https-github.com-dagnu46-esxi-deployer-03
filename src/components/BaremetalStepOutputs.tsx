@@ -39,6 +39,14 @@ export interface StepOutputData {
   selectedVendor: BaremetalVendor;
   hardwareModel: string;
   bmcIp: string;
+  bmcPort?: number;
+  bmcProtocol?: string;
+  bmcUsername?: string;
+  ipmiAccessStatus?: {
+    status: 'success' | 'failed' | 'warn';
+    latencyMs?: number;
+    summary?: string;
+  } | null;
   templateName?: string;
   targetBootDevice?: string;
 }
@@ -273,7 +281,29 @@ esxcli network ip dns search add --domain=corp.internal`;
                 {data.hardwareModel || '<Pending Hardware Details>'}
               </span>
               <span className="text-[10px] text-slate-400 font-mono">
-                {data.bmcIp ? `BMC: ${data.bmcIp}:443` : 'BMC: <Not Configured>'}
+                {data.bmcIp ? `BMC: ${data.bmcIp}:${data.bmcPort || 443}` : 'BMC: <Not Configured>'}
+              </span>
+            </div>
+
+            <div className="bg-slate-800/80 p-2.5 rounded-lg border border-slate-700/60">
+              <span className="text-[10px] text-slate-400 uppercase tracking-wider block">IPMI Access Status</span>
+              <div className="flex items-center gap-1.5 mt-0.5">
+                {data.ipmiAccessStatus?.status === 'success' ? (
+                  <span className="px-1.5 py-0.5 rounded bg-emerald-950/80 border border-emerald-700 text-emerald-400 font-semibold text-[10px]">
+                    Verified ({data.ipmiAccessStatus.latencyMs || 0}ms RTT)
+                  </span>
+                ) : data.ipmiAccessStatus?.status === 'failed' ? (
+                  <span className="px-1.5 py-0.5 rounded bg-red-950/80 border border-red-700 text-red-400 font-semibold text-[10px]">
+                    Auth Failed
+                  </span>
+                ) : (
+                  <span className="px-1.5 py-0.5 rounded bg-amber-950/80 border border-amber-700 text-amber-300 font-semibold text-[10px]">
+                    Untested
+                  </span>
+                )}
+              </div>
+              <span className="text-[10px] text-slate-400 font-mono block mt-0.5 truncate">
+                User: {data.bmcUsername || 'root'} • {data.bmcProtocol?.toUpperCase() || 'REDFISH'}
               </span>
             </div>
 
@@ -336,6 +366,25 @@ esxcli network ip dns search add --domain=corp.internal`;
               <div>
                 <span className="text-slate-400">Target ISO:</span>{' '}
                 <strong className="font-mono text-slate-200">{data.selectedIso.version}</strong>
+              </div>
+              <div className="sm:col-span-2 pt-1 border-t border-slate-700/60 flex items-center justify-between">
+                <span className="text-slate-400">IPMI / BMC Access (IP + Credentials):</span>{' '}
+                {data.ipmiAccessStatus?.status === 'success' ? (
+                  <span className="font-mono text-emerald-400 font-semibold flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                    Verified ({data.bmcIp}:{data.bmcPort || 443} • {data.ipmiAccessStatus.latencyMs || 0}ms RTT • User: {data.bmcUsername || 'root'})
+                  </span>
+                ) : data.ipmiAccessStatus?.status === 'failed' ? (
+                  <span className="font-mono text-red-400 font-semibold flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-red-400"></span>
+                    Auth Failed ({data.bmcIp})
+                  </span>
+                ) : (
+                  <span className="font-mono text-amber-300 font-semibold flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-amber-400"></span>
+                    Untested ({data.bmcIp || 'No IP'})
+                  </span>
+                )}
               </div>
             </div>
           </div>

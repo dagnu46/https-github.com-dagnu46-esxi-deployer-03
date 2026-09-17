@@ -599,5 +599,51 @@ export interface BaremetalEsxiDeploymentJob {
   postInstallValidation?: PostInstallEsxiValidation;
 }
 
+export interface ServiceNowExtractedFields {
+  hostname?: string;
+  managementIp?: string;
+  managementMask?: string;
+  ipmiAddress?: string;
+  vmotionIp?: string;
+  vmotionMask?: string;
+  gatewayIp?: string;
+  vlanId?: number;
+  dnsServers?: string[];
+  hardwareModel?: string;
+  hardwareVendor?: 'DELL' | 'LENOVO';
+  esxiVersion?: string;
+}
+
+export interface ServiceNowRitmData {
+  number: string;
+  sysId?: string;
+  shortDescription: string;
+  description?: string;
+  state: string;
+  stage: string;
+  approval: string;
+  requester: string;
+  environment: string;
+  datacenter?: string;
+  cluster?: string;
+  extractedFields: ServiceNowExtractedFields;
+  allVariables: Record<string, { label: string; value: any; displayValue?: string }>;
+  rawFields?: Record<string, any>;
+  source: 'live_api' | 'cached' | 'simulated';
+  instanceUrl: string;
+  fetchedAt: string;
+  error?: string;
+}
+
+export interface ServiceNowConnectionConfig {
+  instanceUrl: string;
+  username: string;
+  password?: string;
+  isConnected?: boolean;
+  lastChecked?: string;
+}
+
+
+
 
 

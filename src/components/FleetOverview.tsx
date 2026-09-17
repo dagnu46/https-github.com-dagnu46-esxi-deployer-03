@@ -7,7 +7,9 @@ import {
   ArrowUpCircle,
   HardDrive,
   X,
-  Play
+  Play,
+  ShieldCheck,
+  RefreshCw
 } from 'lucide-react';
 import { Server, ComponentType, ComponentFirmware } from '../types';
 
@@ -26,6 +28,8 @@ interface FleetOverviewProps {
   selectedServerIds: string[];
   onClearSelection: () => void;
   onUpgradeSelected: () => void;
+  onTestIpmiSelected?: () => void;
+  isTestingIpmiSelected?: boolean;
   onSelectAllVisible: (ids: string[]) => void;
 }
 
@@ -44,6 +48,8 @@ export const FleetOverview: React.FC<FleetOverviewProps> = ({
   selectedServerIds,
   onClearSelection,
   onUpgradeSelected,
+  onTestIpmiSelected,
+  isTestingIpmiSelected,
 }) => {
   // Compute analytics
   const totalServers = servers.length;
@@ -352,6 +358,23 @@ export const FleetOverview: React.FC<FleetOverviewProps> = ({
             </div>
 
             <div className="flex items-center space-x-2">
+              {onTestIpmiSelected && (
+                <button
+                  type="button"
+                  id="btn-test-ipmi-selected-banner"
+                  onClick={onTestIpmiSelected}
+                  disabled={isTestingIpmiSelected}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white border border-slate-300 text-slate-700 text-xs font-semibold hover:bg-slate-50 transition-colors shadow-xs disabled:opacity-50"
+                  title="Test IPMI access (IP and credentials) for all selected servers"
+                >
+                  {isTestingIpmiSelected ? (
+                    <RefreshCw className="w-3.5 h-3.5 text-indigo-600 animate-spin" />
+                  ) : (
+                    <ShieldCheck className="w-3.5 h-3.5 text-indigo-600" />
+                  )}
+                  <span>Test IPMI Access ({selectedServerIds.length})</span>
+                </button>
+              )}
               <button
                 type="button"
                 id="btn-upgrade-selected-banner"

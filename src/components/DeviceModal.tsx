@@ -115,7 +115,7 @@ export const DeviceModal: React.FC<DeviceModalProps> = ({
   const [bmcProtocol, setBmcProtocol] = useState<BmcProtocol>('redfish');
   const [bmcPort, setBmcPort] = useState<number>(443);
   const [bmcUsername, setBmcUsername] = useState('root');
-  const [bmcPassword, setBmcPassword] = useState('P@ssw0rd2026!');
+  const [bmcPassword, setBmcPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [ignoreSslErrors, setIgnoreSslErrors] = useState(true);
 
@@ -124,7 +124,7 @@ export const DeviceModal: React.FC<DeviceModalProps> = ({
   const [sshPort, setSshPort] = useState<number>(22);
   const [sshUsername, setSshUsername] = useState('sysadmin');
   const [sshAuthType, setSshAuthType] = useState<'password' | 'key'>('password');
-  const [sshPassword, setSshPassword] = useState('HostP@ss2026!');
+  const [sshPassword, setSshPassword] = useState('');
   const [sshKey, setSshKey] = useState('');
   const [showSshPassword, setShowSshPassword] = useState(false);
 
@@ -194,7 +194,7 @@ export const DeviceModal: React.FC<DeviceModalProps> = ({
         setBmcProtocol(editingServer.credentials.bmcProtocol || 'redfish');
         setBmcPort(editingServer.credentials.bmcPort || (editingServer.credentials.bmcProtocol === 'ipmi' ? 623 : 443));
         setBmcUsername(editingServer.credentials.bmcUsername || 'root');
-        setBmcPassword(editingServer.credentials.bmcPassword || '••••••••');
+        setBmcPassword(editingServer.credentials.bmcPassword || '');
         setIgnoreSslErrors(editingServer.credentials.ignoreSslErrors ?? true);
         setEnableSsh(!!editingServer.credentials.enableSsh);
         setSshPort(editingServer.credentials.sshPort || 22);
@@ -230,13 +230,13 @@ export const DeviceModal: React.FC<DeviceModalProps> = ({
       setBmcProtocol('redfish');
       setBmcPort(443);
       setBmcUsername('root');
-      setBmcPassword('P@ssw0rd2026!');
+      setBmcPassword('');
       setIgnoreSslErrors(true);
       setEnableSsh(false);
       setSshPort(22);
       setSshUsername('sysadmin');
       setSshAuthType('password');
-      setSshPassword('HostP@ss2026!');
+      setSshPassword('');
       setSshKey('');
 
       setDatacenter('US-East (Ashburn DC2)');

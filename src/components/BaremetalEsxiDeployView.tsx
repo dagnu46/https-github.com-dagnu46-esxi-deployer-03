@@ -38,7 +38,8 @@ import {
   DellOpenManageWorkflowConfig, 
   LenovoLxcaWorkflowConfig, 
   BaremetalNetworkProfile, 
-  PostInstallEsxiValidation 
+  PostInstallEsxiValidation,
+  AccessTestResult
 } from '../types';
 import { 
   fetchBaremetalCatalog, 
@@ -48,7 +49,10 @@ import {
   verifyPostInstallEsxi, 
   joinBaremetalVcenter 
 } from '../services/api';
+import { testServerAccess } from '../utils/accessTester';
 import { BaremetalWizardView } from './BaremetalWizardView';
+import { BaremetalStepOutputs } from './BaremetalStepOutputs';
+import { getStoredEsxiIsos } from '../services/esxiIsoService';
 
 interface BaremetalEsxiDeployViewProps {
   servers: Server[];
@@ -66,7 +70,8 @@ export const BaremetalEsxiDeployView: React.FC<BaremetalEsxiDeployViewProps> = (
   onShowToast
 }) => {
   // Top Navigation Tabs
-  const [activeSubTab, setActiveSubTab] = useState<'wizard' | 'post-install' | 'jobs'>('wizard');
+  const [activeSubTab, setActiveSubTab] = useState<'wizard' | 'post-install' | 'jobs' | 'outputs'>('wizard');
+  const [globalOutputStep, setGlobalOutputStep] = useState<1 | 2 | 3 | 4 | 5>(1);
 
   // Catalog loaded from backend
   const [catalog, setCatalog] = useState<{
@@ -104,9 +109,15 @@ export const BaremetalEsxiDeployView: React.FC<BaremetalEsxiDeployViewProps> = (
     hostname: '',
     model: '',
     bmcIp: '',
+    bmcPort: 443,
+    bmcProtocol: 'redfish' as 'redfish' | 'ipmi' | 'https',
+    bmcUsername: 'root',
+    bmcPassword: '',
     macAddress: '',
     datacenter: '',
     rack: '',
+    accessStatus: null as AccessTestResult | null,
+    isTestingIpmi: false
   });
 
   // Dell OpenManage Config
@@ -249,9 +260,15 @@ export const BaremetalEsxiDeployView: React.FC<BaremetalEsxiDeployViewProps> = (
           hostname: match.hostname,
           model: match.model,
           bmcIp: match.bmcIp || '',
+          bmcPort: match.credentials?.bmcPort || (match.bmcAffectedType === 'Supermicro IPMI' ? 623 : 443),
+          bmcProtocol: match.credentials?.bmcProtocol || (match.bmcAffectedType === 'Supermicro IPMI' ? 'ipmi' : 'redfish'),
+          bmcUsername: match.credentials?.bmcUsername || 'root',
+          bmcPassword: match.credentials?.bmcPassword || '',
           macAddress: match.accessStatus?.discoveredHardware?.macAddress || '',
           datacenter: match.datacenter || '',
           rack: match.rack || '',
+          accessStatus: match.accessStatus || null,
+          isTestingIpmi: false
         });
         updateNetworkProfile({
           hostname: match.hostname,
@@ -281,9 +298,15 @@ export const BaremetalEsxiDeployView: React.FC<BaremetalEsxiDeployViewProps> = (
         hostname: '',
         model: '',
         bmcIp: '',
+        bmcPort: 443,
+        bmcProtocol: 'redfish',
+        bmcUsername: 'root',
+        bmcPassword: '',
         macAddress: '',
         datacenter: '',
         rack: '',
+        accessStatus: null,
+        isTestingIpmi: false
       });
       return;
     }
@@ -295,9 +318,15 @@ export const BaremetalEsxiDeployView: React.FC<BaremetalEsxiDeployViewProps> = (
         hostname: match.hostname,
         model: match.model,
         bmcIp: match.bmcIp || '',
+        bmcPort: match.credentials?.bmcPort || (match.bmcAffectedType === 'Supermicro IPMI' ? 623 : 443),
+        bmcProtocol: match.credentials?.bmcProtocol || (match.bmcAffectedType === 'Supermicro IPMI' ? 'ipmi' : 'redfish'),
+        bmcUsername: match.credentials?.bmcUsername || 'root',
+        bmcPassword: match.credentials?.bmcPassword || '',
         macAddress: match.accessStatus?.discoveredHardware?.macAddress || '',
         datacenter: match.datacenter || '',
         rack: match.rack || '',
+        accessStatus: match.accessStatus || null,
+        isTestingIpmi: false
       });
       updateNetworkProfile({
         hostname: match.hostname,
@@ -305,6 +334,80 @@ export const BaremetalEsxiDeployView: React.FC<BaremetalEsxiDeployViewProps> = (
       });
       setVerifyTargetIp(match.ip || '');
       setVerifyVendor(v);
+    }
+  };
+
+  // Test IPMI Access (IP + Credentials) handler
+  const handleTestIpmiAccess = async (params?: {
+    bmcIp?: string;
+    bmcPort?: number;
+    bmcProtocol?: 'redfish' | 'ipmi' | 'https';
+    bmcUsername?: string;
+    bmcPassword?: string;
+  }): Promise<AccessTestResult> => {
+    const targetBmcIp = (params?.bmcIp || hardwareForm.bmcIp || '').trim();
+    const targetPort = params?.bmcPort || hardwareForm.bmcPort || 443;
+    const targetProtocol = params?.bmcProtocol || hardwareForm.bmcProtocol || 'redfish';
+    const targetUsername = params?.bmcUsername ?? hardwareForm.bmcUsername ?? 'root';
+    const targetPassword = params?.bmcPassword ?? hardwareForm.bmcPassword ?? '';
+
+    setHardwareForm(p => ({ ...p, isTestingIpmi: true }));
+
+    try {
+      const res = await testServerAccess({
+        hostname: esxiName || hardwareForm.hostname || 'target-server',
+        ip: hostIp || '',
+        bmcIp: targetBmcIp,
+        bmcAffectedType: targetProtocol === 'ipmi' ? 'Supermicro IPMI' : selectedVendor === 'DELL' ? 'iDRAC9' : 'Lenovo XClarity',
+        model: (hardwareForm.model as any) || (selectedVendor === 'DELL' ? 'Dell PowerEdge R750' : 'Lenovo ThinkSystem SR650 V2'),
+        credentials: {
+          bmcUsername: targetUsername,
+          bmcPassword: targetPassword,
+          bmcProtocol: targetProtocol,
+          bmcPort: targetPort,
+          ignoreSslErrors: true
+        }
+      });
+
+      setHardwareForm(p => ({
+        ...p,
+        accessStatus: res,
+        isTestingIpmi: false,
+        model: res.discoveredHardware?.model || p.model
+      }));
+
+      if (selectedExistingServerId && onUpdateServer) {
+        const existing = servers.find(s => s.id === selectedExistingServerId);
+        if (existing) {
+          onUpdateServer({ ...existing, accessStatus: res });
+        }
+      }
+
+      if (res.status === 'success') {
+        onShowToast?.(`IPMI access verified on ${targetBmcIp}:${targetPort} (${res.latencyMs || 0}ms RTT). Credentials authenticated!`, 'success');
+      } else {
+        onShowToast?.(`IPMI access failed on ${targetBmcIp}:${targetPort}: ${res.summary}`, 'warn');
+      }
+
+      return res;
+    } catch (e: any) {
+      const failedRes: AccessTestResult = {
+        status: 'failed',
+        testedAt: new Date().toISOString(),
+        testedBy: 'Real Network Probe',
+        summary: e.message || 'IPMI network connection error',
+        steps: [
+          {
+            id: 'step-network',
+            name: 'Network Connection Probe',
+            status: 'failed',
+            message: e.message || 'Failed to connect to target IPMI'
+          }
+        ]
+      };
+      setHardwareForm(p => ({ ...p, accessStatus: failedRes, isTestingIpmi: false }));
+      onShowToast?.(`IPMI verification error: ${e.message}`, 'warn');
+      return failedRes;
     }
   };
 
@@ -331,6 +434,14 @@ export const BaremetalEsxiDeployView: React.FC<BaremetalEsxiDeployViewProps> = (
       vmotionIp,
       vmotionMask,
       targetManagementIp: hostIp,
+      credentials: {
+        bmcPort: hardwareForm.bmcPort || 443,
+        bmcProtocol: hardwareForm.bmcProtocol || 'redfish',
+        bmcUsername: hardwareForm.bmcUsername || 'root',
+        bmcPassword: hardwareForm.bmcPassword,
+        ignoreSslErrors: true
+      },
+      ipmiVerified: hardwareForm.accessStatus?.status === 'success',
       dellConfig: isDell ? {
         ...dellConfig,
         dellCustomizedIso: selectedIsoName,
@@ -377,7 +488,7 @@ export const BaremetalEsxiDeployView: React.FC<BaremetalEsxiDeployViewProps> = (
         managementVlan: vlanId,
         enableSsh: true,
         enableEsxiShell: true,
-        rootPassword: currentNetworkProfile.rootPassword || 'VMwarePassword!2026',
+        rootPassword: currentNetworkProfile.rootPassword || '',
         vmk0UplinkNics: ['vmnic0', 'vmnic1']
       },
     };
@@ -576,6 +687,19 @@ export const BaremetalEsxiDeployView: React.FC<BaremetalEsxiDeployViewProps> = (
           <div className="flex items-center gap-2.5">
             <button
               type="button"
+              id="btn-switch-to-outputs"
+              onClick={() => setActiveSubTab('outputs')}
+              className={`px-3.5 py-2 rounded-lg text-xs font-semibold transition-colors flex items-center gap-2 border ${
+                activeSubTab === 'outputs'
+                  ? 'bg-indigo-600 text-white border-indigo-500 shadow-xs'
+                  : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border-slate-700'
+              }`}
+            >
+              <Layers className="w-4 h-4 text-indigo-400" />
+              <span>Engine Outputs Console</span>
+            </button>
+            <button
+              type="button"
               id="btn-switch-to-post-install"
               onClick={() => {
                 setActiveSubTab('post-install');
@@ -650,6 +774,20 @@ export const BaremetalEsxiDeployView: React.FC<BaremetalEsxiDeployViewProps> = (
             <ShieldCheck className="w-3.5 h-3.5 text-emerald-300" />
             <span>3. "Once ESXi Installed" Post-Install Hub</span>
           </button>
+
+          <button
+            type="button"
+            id="tab-baremetal-outputs"
+            onClick={() => setActiveSubTab('outputs')}
+            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors flex items-center gap-2 ${
+              activeSubTab === 'outputs' 
+                ? 'bg-indigo-600 text-white shadow-xs' 
+                : 'text-slate-300 hover:text-white hover:bg-slate-800'
+            }`}
+          >
+            <Layers className="w-3.5 h-3.5" />
+            <span>4. Engine Stage Outputs & Artifacts</span>
+          </button>
         </div>
       </div>
 
@@ -691,6 +829,7 @@ export const BaremetalEsxiDeployView: React.FC<BaremetalEsxiDeployViewProps> = (
           setGatewayIp={setGatewayIp}
           vlanId={vlanId}
           setVlanId={setVlanId}
+          onTestIpmiAccess={handleTestIpmiAccess}
         />
       )}
 
@@ -1302,6 +1441,95 @@ export const BaremetalEsxiDeployView: React.FC<BaremetalEsxiDeployViewProps> = (
           </div>
         </div>
       )}
+
+      {/* SUB-VIEW 4: GLOBAL PROVISIONING ENGINE STAGE OUTPUTS */}
+      {activeSubTab === 'outputs' && (
+        <div className="space-y-6">
+          <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <div className="inline-flex items-center gap-2 px-2.5 py-0.5 rounded-full bg-indigo-50 text-indigo-700 text-xs font-semibold mb-1">
+                <Layers className="w-3.5 h-3.5 text-indigo-600" />
+                <span>Bare-Metal Hypervisor Provisioning Engine</span>
+              </div>
+              <h2 className="text-base font-bold text-slate-900">Provisioning Engine Outputs & Artifacts Console</h2>
+              <p className="text-xs text-slate-500">
+                Global output inspector for the bare-metal provisioning engine. Select any wizard step to inspect generated Kickstart scripts, BMC payloads, network payloads, and orchestration profiles.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-lg">
+              {([1, 2, 3, 4, 5] as const).map(stepNum => (
+                <button
+                  key={stepNum}
+                  type="button"
+                  id={`btn-engine-output-step-${stepNum}`}
+                  onClick={() => setGlobalOutputStep(stepNum)}
+                  className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all cursor-pointer ${
+                    globalOutputStep === stepNum 
+                      ? 'bg-white text-indigo-700 shadow-2xs' 
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  Step {stepNum} Output
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {(() => {
+            const storedIsosList = getStoredEsxiIsos();
+            const activeIsoObj = storedIsosList.find(i => i.fileName === selectedIsoName) || storedIsosList[0] || {
+              id: 'none',
+              fileName: selectedIsoName || 'VMware-VMvisor-Installer-8.0U2-custom.iso',
+              version: '8.0U2',
+              build: '22380479',
+              vendor: selectedVendor === 'DELL' ? 'Dell Custom' : 'Lenovo Custom',
+              sizeMb: 685,
+              sha256: '9f83ac58a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8',
+              oemAddon: selectedVendor === 'DELL' ? 'Dell EMC OpenManage Addon v8.0.2' : 'Lenovo XCC Provisioning Addon v8.0',
+              releaseDate: '2024-03-15',
+              certifiedFor: ['DELL', 'LENOVO']
+            };
+
+            return (
+              <BaremetalStepOutputs
+                step={globalOutputStep}
+                data={{
+                  ritmNumber: ritmNumber || 'RITM0049281',
+                  ritmRequester: 'Cloud Infrastructure Operations',
+                  ritmEnvironment: 'Production',
+                  esxiName: esxiName || (hardwareForm.hostname || 'esx-prod-01.corp.internal'),
+                  hostIp: hostIp || '10.100.20.45',
+                  hostMask: hostMask || '255.255.255.0',
+                  vmotionIp: vmotionIp || '10.100.30.45',
+                  vmotionMask: vmotionMask || '255.255.255.0',
+                  dnsIps: selectedDnsIps.length > 0 ? selectedDnsIps : ['8.8.8.8', '10.100.1.1'],
+                  gatewayIp: gatewayIp || '10.100.20.1',
+                  vlanId: vlanId || 120,
+                  selectedIso: {
+                    fileName: activeIsoObj.fileName,
+                    version: activeIsoObj.version,
+                    build: activeIsoObj.build,
+                    sizeMb: activeIsoObj.sizeMb,
+                    sha256: activeIsoObj.sha256,
+                    oemAddon: activeIsoObj.oemAddon
+                  },
+                  selectedVendor,
+                  hardwareModel: hardwareForm.model || (selectedVendor === 'DELL' ? 'PowerEdge R750' : 'ThinkSystem SR650 V3'),
+                  bmcIp: hardwareForm.bmcIp || '192.168.10.150',
+                  bmcPort: hardwareForm.bmcPort || (hardwareForm.bmcProtocol === 'ipmi' ? 623 : 443),
+                  bmcProtocol: hardwareForm.bmcProtocol || 'redfish',
+                  bmcUsername: hardwareForm.bmcUsername || 'root',
+                  ipmiAccessStatus: hardwareForm.accessStatus,
+                  templateName: selectedVendor === 'DELL' ? dellConfig.templateName : lenovoConfig.configPatternName,
+                  targetBootDevice: selectedVendor === 'DELL' ? dellConfig.targetBootDevice : lenovoConfig.targetBootDevice
+                }}
+              />
+            );
+          })()}
+        </div>
+      )}
     </div>
   );
 };
+

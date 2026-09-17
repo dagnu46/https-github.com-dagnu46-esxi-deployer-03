@@ -19,8 +19,8 @@ let memBaseline: BaselineConfig = { ...DEFAULT_BASELINE };
 const memCampaigns = new Map<string, UpgradeCampaign>();
 
 export function getDatabaseConfig(): { connectionString?: string; config: PoolConfig } {
-  const user = process.env.PGUSER || 'Dagnu';
-  const password = process.env.PGPASSWORD || 'Dagnu0046!';
+  const user = process.env.PGUSER || 'postgres';
+  const password = process.env.PGPASSWORD || '';
   const host = process.env.PGHOST || 'localhost';
   const port = parseInt(process.env.PGPORT || '5432', 10);
   const database = process.env.PGDATABASE || 'firmware_hub';
@@ -37,13 +37,14 @@ export function getDatabaseConfig(): { connectionString?: string; config: PoolCo
     };
   }
 
-  // Construct connection URL with encoded password for safety
-  const defaultUrl = `postgres://${user}:${encodeURIComponent(password)}@${host}:${port}/${database}`;
+  // Construct connection URL with encoded password if provided
+  const userAuth = password ? `${user}:${encodeURIComponent(password)}` : user;
+  const defaultUrl = `postgres://${userAuth}@${host}:${port}/${database}`;
   return {
     connectionString: defaultUrl,
     config: {
       user,
-      password,
+      ...(password ? { password } : {}),
       host,
       port,
       database,

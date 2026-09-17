@@ -639,6 +639,65 @@ export default function App() {
     setIsWizardOpen(true);
   };
 
+  const [isTestingIpmiBatch, setIsTestingIpmiBatch] = useState(false);
+
+  // Test IPMI access (IP & credentials) for all selected servers
+  const handleTestIpmiSelected = async () => {
+    if (selectedServerIds.length === 0) return;
+    setIsTestingIpmiBatch(true);
+    showToast(`Testing IPMI access & credentials on ${selectedServerIds.length} server(s)...`, 'info');
+
+    let successCount = 0;
+    let failCount = 0;
+    const updatedServers = [...servers];
+
+    for (const serverId of selectedServerIds) {
+      const idx = updatedServers.findIndex(s => s.id === serverId);
+      if (idx === -1) continue;
+      const server = updatedServers[idx];
+
+      try {
+        const result = await testServerAccess({
+          hostname: server.hostname,
+          ip: server.ip || '',
+          bmcIp: server.bmcIp || server.ip || '',
+          bmcAffectedType: server.bmcAffectedType,
+          model: server.model,
+          credentials: server.credentials || {
+            bmcUsername: 'root',
+            bmcPassword: '',
+            bmcProtocol: server.bmcAffectedType === 'Supermicro IPMI' ? 'ipmi' : 'redfish',
+            bmcPort: server.bmcAffectedType === 'Supermicro IPMI' ? 623 : 443,
+            ignoreSslErrors: true
+          }
+        });
+
+        updatedServers[idx] = {
+          ...server,
+          accessStatus: result
+        };
+
+        if (result.status === 'success') {
+          successCount++;
+        } else {
+          failCount++;
+        }
+      } catch (err) {
+        failCount++;
+      }
+    }
+
+    setServers(updatedServers);
+    saveServers(updatedServers);
+    setIsTestingIpmiBatch(false);
+
+    if (failCount === 0) {
+      showToast(`IPMI verified on all ${successCount} server(s) successfully!`, 'success');
+    } else {
+      showToast(`IPMI test finished: ${successCount} verified, ${failCount} failed.`, failCount > 0 ? 'warn' : 'success');
+    }
+  };
+
   // Launch upgrade for selected servers
   const handleUpgradeSelected = () => {
     if (selectedServerIds.length === 0) return;
@@ -905,6 +964,8 @@ export default function App() {
               onClearSelection={() => setSelectedServerIds([])}
               onUpgradeSelected={handleUpgradeSelected}
               onSelectAllVisible={setSelectedServerIds}
+              onTestIpmiSelected={handleTestIpmiSelected}
+              isTestingIpmiSelected={isTestingIpmiBatch}
             />
 
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5 mb-3">

@@ -30,14 +30,21 @@ import {
   RefreshCw,
   FileUp,
   FileCheck,
-  X
+  X,
+  XCircle,
+  Key,
+  ShieldAlert
 } from 'lucide-react';
 import {
   BaremetalVendor,
   DellOpenManageWorkflowConfig,
   LenovoLxcaWorkflowConfig,
   BaremetalNetworkProfile,
-  Server as ServerType
+  Server as ServerType,
+  AccessTestResult,
+  AccessTestStep,
+  ServiceNowExtractedFields,
+  ServiceNowRitmData
 } from '../types';
 import {
   StoredEsxiIso,
@@ -47,8 +54,10 @@ import {
   computeFileSha256,
   inferIsoMetadataFromFilename
 } from '../services/esxiIsoService';
+import { testServerAccess } from '../utils/accessTester';
 import { BaremetalWorkflowVisualizer } from './BaremetalWorkflowVisualizer';
-import { BaremetalStepOutputs } from './BaremetalStepOutputs';
+import { ServiceNowInspector } from './ServiceNowInspector';
+
 
 export const FIXED_DNS_OPTIONS = ['8.8.8.8', '10.100.1.1'] as const;
 
@@ -63,18 +72,17 @@ interface BaremetalWizardViewProps {
     hostname: string;
     model: string;
     bmcIp: string;
+    bmcPort?: number;
+    bmcProtocol?: 'redfish' | 'ipmi' | 'https';
+    bmcUsername?: string;
+    bmcPassword?: string;
     macAddress: string;
     datacenter: string;
     rack: string;
+    accessStatus?: AccessTestResult | null;
+    isTestingIpmi?: boolean;
   };
-  setHardwareForm: React.Dispatch<React.SetStateAction<{
-    hostname: string;
-    model: string;
-    bmcIp: string;
-    macAddress: string;
-    datacenter: string;
-    rack: string;
-  }>>;
+  setHardwareForm: React.Dispatch<React.SetStateAction<any>>;
   dellConfig: DellOpenManageWorkflowConfig;
   setDellConfig: React.Dispatch<React.SetStateAction<DellOpenManageWorkflowConfig>>;
   lenovoConfig: LenovoLxcaWorkflowConfig;
@@ -102,6 +110,13 @@ interface BaremetalWizardViewProps {
   setGatewayIp: (v: string) => void;
   vlanId: number;
   setVlanId: (v: number) => void;
+  onTestIpmiAccess?: (params?: {
+    bmcIp?: string;
+    bmcPort?: number;
+    bmcProtocol?: 'redfish' | 'ipmi' | 'https';
+    bmcUsername?: string;
+    bmcPassword?: string;
+  }) => Promise<any>;
 }
 
 export const BaremetalWizardView: React.FC<BaremetalWizardViewProps> = ({
@@ -138,12 +153,16 @@ export const BaremetalWizardView: React.FC<BaremetalWizardViewProps> = ({
   gatewayIp,
   setGatewayIp,
   vlanId,
-  setVlanId
+  setVlanId,
+  onTestIpmiAccess
 }) => {
   const [wizardStep, setWizardStep] = useState<1 | 2 | 3 | 4 | 5>(1);
   const [ritmRequester, setRitmRequester] = useState('');
   const [ritmEnvironment, setRitmEnvironment] = useState<'Production' | 'Staging' | 'DMZ'>('Production');
   const [showPassword, setShowPassword] = useState(false);
+  const [showBmcPassword, setShowBmcPassword] = useState(false);
+  const [internalTesting, setInternalTesting] = useState(false);
+  const [internalTestingSteps, setInternalTestingSteps] = useState<AccessTestStep[]>([]);
 
   // Stored ISOs state from service
   const [storedIsos, setStoredIsos] = useState<StoredEsxiIso[]>(() => getStoredEsxiIsos());
@@ -203,6 +222,39 @@ export const BaremetalWizardView: React.FC<BaremetalWizardViewProps> = ({
       setSelectedDnsIps([...currentDns, dns]);
     }
   };
+
+  const handleApplyServiceNowFields = (extracted: ServiceNowExtractedFields, ritmData: ServiceNowRitmData) => {
+    setRitmNumber(ritmData.number);
+    if (ritmData.requester) setRitmRequester(ritmData.requester);
+    if (ritmData.environment) setRitmEnvironment(ritmData.environment as any);
+    if (extracted.hostname) {
+      setEsxiName(extracted.hostname);
+      setHardwareForm((p: any) => ({ ...p, hostname: extracted.hostname }));
+    }
+    if (extracted.managementIp) setHostIp(extracted.managementIp);
+    if (extracted.managementMask) setHostMask(extracted.managementMask);
+    if (extracted.vmotionIp) setVmotionIp(extracted.vmotionIp);
+    if (extracted.vmotionMask) setVmotionMask(extracted.vmotionMask);
+    if (extracted.gatewayIp) setGatewayIp(extracted.gatewayIp);
+    if (extracted.vlanId) setVlanId(extracted.vlanId);
+    if (extracted.dnsServers && extracted.dnsServers.length > 0) {
+      setSelectedDnsIps(extracted.dnsServers as any);
+    }
+    if (extracted.ipmiAddress) {
+      setHardwareForm((p: any) => ({ ...p, bmcIp: extracted.ipmiAddress }));
+    }
+    if (extracted.hardwareModel) {
+      setHardwareForm((p: any) => ({ ...p, model: extracted.hardwareModel }));
+    }
+    if (extracted.hardwareVendor) {
+      setSelectedVendor(extracted.hardwareVendor);
+    }
+    setStatusMessage({
+      type: 'success',
+      text: `Fields successfully retrieved from ServiceNow ticket ${ritmData.number} and loaded into wizard!`
+    });
+  };
+
 
   // Handle file selection for upload
   const handleFileProcess = async (file: File) => {
@@ -338,6 +390,72 @@ export const BaremetalWizardView: React.FC<BaremetalWizardViewProps> = ({
     selectedVendor === 'DELL' ? s.vendor === 'DELL' : s.vendor === 'LENOVO'
   );
 
+  const handleTestIpmi = async () => {
+    const targetIp = (hardwareForm.bmcIp || '').trim();
+    if (!targetIp) {
+      setStatusMessage({ type: 'error', text: 'Please specify the BMC / IPMI IP address before testing access.' });
+      return;
+    }
+    setInternalTesting(true);
+    setHardwareForm((p: any) => ({ ...p, isTestingIpmi: true }));
+
+    try {
+      if (onTestIpmiAccess) {
+        const res = await onTestIpmiAccess({
+          bmcIp: targetIp,
+          bmcPort: hardwareForm.bmcPort || (hardwareForm.bmcProtocol === 'ipmi' ? 623 : 443),
+          bmcProtocol: hardwareForm.bmcProtocol || 'redfish',
+          bmcUsername: hardwareForm.bmcUsername ?? 'root',
+          bmcPassword: hardwareForm.bmcPassword ?? ''
+        });
+        if (res && res.steps) {
+          setInternalTestingSteps(res.steps);
+        }
+      } else {
+        const res = await testServerAccess({
+          hostname: esxiName || hardwareForm.hostname || 'target-server',
+          ip: hostIp || '',
+          bmcIp: targetIp,
+          bmcAffectedType: (hardwareForm.bmcProtocol === 'ipmi' ? 'Supermicro IPMI' : selectedVendor === 'DELL' ? 'Dell iDRAC' : 'Lenovo XCC') as any,
+          model: (hardwareForm.model as any) || (selectedVendor === 'DELL' ? 'Dell PowerEdge R750' : 'Lenovo ThinkSystem SR650 V2'),
+          credentials: {
+            bmcUsername: hardwareForm.bmcUsername ?? 'root',
+            bmcPassword: hardwareForm.bmcPassword ?? '',
+            bmcProtocol: hardwareForm.bmcProtocol || 'redfish',
+            bmcPort: hardwareForm.bmcPort || (hardwareForm.bmcProtocol === 'ipmi' ? 623 : 443),
+            ignoreSslErrors: true
+          },
+          onStepUpdate: (steps) => setInternalTestingSteps(steps)
+        });
+        setHardwareForm((p: any) => ({
+          ...p,
+          accessStatus: res,
+          isTestingIpmi: false,
+          model: res.discoveredHardware?.model || p.model
+        }));
+      }
+    } catch (e: any) {
+      const failedRes: AccessTestResult = {
+        status: 'failed',
+        testedAt: new Date().toISOString(),
+        testedBy: 'Real Network Probe',
+        summary: e.message || 'Failed to connect to target IPMI',
+        steps: [
+          {
+            id: 'step-network',
+            name: 'Target BMC Route Probe',
+            status: 'failed',
+            message: e.message || 'Host or port unreachable'
+          }
+        ]
+      };
+      setHardwareForm((p: any) => ({ ...p, accessStatus: failedRes, isTestingIpmi: false }));
+    } finally {
+      setInternalTesting(false);
+      setHardwareForm((p: any) => ({ ...p, isTestingIpmi: false }));
+    }
+  };
+
   const stepsList = [
     { step: 1 as const, title: '1. RITM # Reference' },
     { step: 2 as const, title: '2. ESXi Network Form' },
@@ -351,6 +469,7 @@ export const BaremetalWizardView: React.FC<BaremetalWizardViewProps> = ({
   const isStep2Valid = Boolean(esxiName.trim() && hostIp.trim() && hostMask.trim() && vmotionIp.trim() && vmotionMask.trim() && (selectedDnsIps || []).length > 0);
   const isStep3Valid = Boolean(selectedIsoName);
   const isStep4Valid = Boolean(hardwareForm.model && hardwareForm.bmcIp);
+  const isIpmiVerified = hardwareForm.accessStatus?.status === 'success';
 
   return (
     <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
@@ -524,10 +643,17 @@ export const BaremetalWizardView: React.FC<BaremetalWizardViewProps> = ({
                   </div>
                 </div>
               </div>
+
+              {/* ServiceNow Enterprise Ticket & Specific Field Extractor */}
+              <ServiceNowInspector
+                currentRitm={ritmNumber}
+                onApplyFields={handleApplyServiceNowFields}
+                onRitmChange={setRitmNumber}
+              />
             </div>
           )}
 
-          {/* STEP 2: FORM: ESXi Name, IP (+mask), vMotion (+mask), DNS IP: fix list ("8.8.8.8", "10.100.1.1") */}
+          {/* STEP 2: FORM: ESXi Name, IP (+mask), vMotion (+mask), IPMI IP, DNS IP: fix list ("8.8.8.8", "10.100.1.1") */}
           {wizardStep === 2 && (
             <div className="space-y-5">
               <div>
@@ -537,7 +663,7 @@ export const BaremetalWizardView: React.FC<BaremetalWizardViewProps> = ({
                 </div>
                 <h2 className="text-base font-bold text-slate-900">ESXi Host Identity & Network Configuration</h2>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  Define the ESXi hostname, static management IP with subnet mask, dedicated vMotion interface with subnet mask, and fixed DNS resolvers.
+                  Define the ESXi hostname, static management IP with subnet mask, dedicated vMotion interface with subnet mask, out-of-band IPMI address, and fixed DNS resolvers.
                 </p>
               </div>
 
@@ -554,7 +680,7 @@ export const BaremetalWizardView: React.FC<BaremetalWizardViewProps> = ({
                     value={esxiName}
                     onChange={e => {
                       setEsxiName(e.target.value);
-                      setHardwareForm(p => ({ ...p, hostname: e.target.value }));
+                      setHardwareForm((p: any) => ({ ...p, hostname: e.target.value }));
                     }}
                     placeholder="e.g. esx-prod-rack02-01.corp.internal"
                     className="w-full text-xs font-mono font-semibold rounded-lg border border-slate-300 p-2.5 bg-white focus:ring-2 focus:ring-indigo-500"
@@ -653,6 +779,60 @@ export const BaremetalWizardView: React.FC<BaremetalWizardViewProps> = ({
                     </div>
                   </div>
                 </div>
+
+                {/* Step 2 IPMI / Out-of-Band Management Address */}
+                <div className="p-4 bg-indigo-50/60 rounded-xl border border-indigo-200/80 space-y-2.5">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                    <label className="block text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                      <Server className="w-3.5 h-3.5 text-indigo-600" />
+                      <span>IPMI / BMC Out-of-Band Address</span>
+                    </label>
+                    <span className="text-[10px] text-indigo-700 font-semibold uppercase tracking-wider">Required for Virtual Media & PXE Boot</span>
+                  </div>
+                  
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                    <input
+                      type="text"
+                      id="input-step2-ipmi-ip"
+                      value={hardwareForm.bmcIp || ''}
+                      onChange={e => {
+                        const val = e.target.value;
+                        setHardwareForm((p: any) => ({ ...p, bmcIp: val }));
+                      }}
+                      placeholder="e.g. 192.168.10.150"
+                      className="flex-1 text-xs font-mono font-bold rounded-lg border border-slate-300 p-2.5 bg-white focus:ring-2 focus:ring-indigo-500"
+                    />
+                    <button
+                      type="button"
+                      id="btn-step2-test-ipmi"
+                      onClick={handleTestIpmi}
+                      disabled={!hardwareForm.bmcIp?.trim() || internalTesting || hardwareForm.isTestingIpmi}
+                      className="px-3.5 py-2.5 rounded-lg bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white font-semibold text-xs flex items-center justify-center gap-1.5 shrink-0 transition-colors shadow-2xs cursor-pointer"
+                    >
+                      {internalTesting || hardwareForm.isTestingIpmi ? (
+                        <>
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                          <span>Testing IPMI...</span>
+                        </>
+                      ) : (
+                        <>
+                          <ShieldCheck className="w-3.5 h-3.5" />
+                          <span>{hardwareForm.accessStatus?.status === 'success' ? 'IPMI Verified (Re-test)' : 'Test IPMI Access'}</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                  <div className="flex items-center justify-between text-[11px] text-slate-500">
+                    <span>Target BMC (Dell iDRAC9 / Lenovo XCC) interface used by the provisioning engine to mount ESXi ISO.</span>
+                    {hardwareForm.accessStatus?.status === 'success' && (
+                      <span className="text-emerald-700 font-bold flex items-center gap-1">
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        <span>Connected ({hardwareForm.accessStatus.latencyMs || 15}ms)</span>
+                      </span>
+                    )}
+                  </div>
+                </div>
+
 
                 {/* 4. DNS IP: fix list ("8.8.8.8", "10.100.1.1") */}
                 <div className="bg-white p-4 rounded-xl border border-slate-200 space-y-2.5">
@@ -1162,9 +1342,15 @@ export const BaremetalWizardView: React.FC<BaremetalWizardViewProps> = ({
                             hostname: s.hostname,
                             model: s.model,
                             bmcIp: s.bmcIp || '',
+                            bmcPort: s.credentials?.bmcPort || (s.bmcAffectedType === 'Supermicro IPMI' ? 623 : 443),
+                            bmcProtocol: s.credentials?.bmcProtocol || (s.bmcAffectedType === 'Supermicro IPMI' ? 'ipmi' : 'redfish'),
+                            bmcUsername: s.credentials?.bmcUsername || 'root',
+                            bmcPassword: s.credentials?.bmcPassword || '',
                             macAddress: s.accessStatus?.discoveredHardware?.macAddress || '',
                             datacenter: s.datacenter || '',
-                            rack: s.rack || ''
+                            rack: s.rack || '',
+                            accessStatus: s.accessStatus || null,
+                            isTestingIpmi: false
                           });
                           updateNetworkProfile({
                             hostname: s.hostname,
@@ -1176,9 +1362,15 @@ export const BaremetalWizardView: React.FC<BaremetalWizardViewProps> = ({
                           hostname: '',
                           model: '',
                           bmcIp: '',
+                          bmcPort: 443,
+                          bmcProtocol: 'redfish',
+                          bmcUsername: 'root',
+                          bmcPassword: '',
                           macAddress: '',
                           datacenter: '',
-                          rack: ''
+                          rack: '',
+                          accessStatus: null,
+                          isTestingIpmi: false
                         });
                       }
                     }}
@@ -1193,57 +1385,279 @@ export const BaremetalWizardView: React.FC<BaremetalWizardViewProps> = ({
                   </select>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-800 mb-1">
-                      Hardware Server Model
-                    </label>
-                    <div className="flex gap-2">
-                      <select
-                        id="select-server-model"
-                        value={hardwareForm.model}
-                        onChange={e => setHardwareForm(p => ({ ...p, model: e.target.value }))}
-                        className="flex-1 text-xs font-bold rounded-lg border-slate-300 p-2.5 bg-white"
-                      >
-                        <option value="">-- Select Standard Model --</option>
-                        {selectedVendor === 'DELL' ? (
-                          <>
-                            <option value="Dell PowerEdge R750">Dell PowerEdge R750 (2U 2-Socket)</option>
-                            <option value="Dell PowerEdge R650">Dell PowerEdge R650 (1U 2-Socket)</option>
-                            <option value="Dell PowerEdge R740xd">Dell PowerEdge R740xd (2U 14G)</option>
-                            <option value="Dell PowerEdge MX750c">Dell PowerEdge MX750c (Modular Sled)</option>
-                          </>
-                        ) : (
-                          <>
-                            <option value="Lenovo ThinkSystem SR650 V2">Lenovo ThinkSystem SR650 V2 (2U 2-Socket)</option>
-                            <option value="Lenovo ThinkSystem SR650 V3">Lenovo ThinkSystem SR650 V3 (4th Gen Xeon)</option>
-                            <option value="Lenovo ThinkSystem SR630 V2">Lenovo ThinkSystem SR630 V2 (1U)</option>
-                          </>
-                        )}
-                      </select>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-800 mb-1">
+                    Hardware Server Model
+                  </label>
+                  <div className="flex gap-2">
+                    <select
+                      id="select-server-model"
+                      value={hardwareForm.model}
+                      onChange={e => setHardwareForm((p: any) => ({ ...p, model: e.target.value }))}
+                      className="flex-1 text-xs font-bold rounded-lg border-slate-300 p-2.5 bg-white"
+                    >
+                      <option value="">-- Select Standard Model --</option>
+                      {selectedVendor === 'DELL' ? (
+                        <>
+                          <option value="Dell PowerEdge R750">Dell PowerEdge R750 (2U 2-Socket)</option>
+                          <option value="Dell PowerEdge R650">Dell PowerEdge R650 (1U 2-Socket)</option>
+                          <option value="Dell PowerEdge R740xd">Dell PowerEdge R740xd (2U 14G)</option>
+                          <option value="Dell PowerEdge MX750c">Dell PowerEdge MX750c (Modular Sled)</option>
+                        </>
+                      ) : (
+                        <>
+                          <option value="Lenovo ThinkSystem SR650 V2">Lenovo ThinkSystem SR650 V2 (2U 2-Socket)</option>
+                          <option value="Lenovo ThinkSystem SR650 V3">Lenovo ThinkSystem SR650 V3 (4th Gen Xeon)</option>
+                          <option value="Lenovo ThinkSystem SR630 V2">Lenovo ThinkSystem SR630 V2 (1U)</option>
+                        </>
+                      )}
+                    </select>
+                    <input
+                      type="text"
+                      value={hardwareForm.model}
+                      onChange={e => setHardwareForm((p: any) => ({ ...p, model: e.target.value }))}
+                      placeholder="Or type model..."
+                      className="w-40 text-xs rounded-lg border-slate-300 p-2.5 bg-white"
+                    />
+                  </div>
+                </div>
+
+                {/* Target Server IPMI / BMC Access & Credentials Card */}
+                <div className="bg-white rounded-xl border border-indigo-100 shadow-xs p-4 space-y-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2.5 border-b border-slate-100">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-8 h-8 rounded-lg bg-indigo-50 border border-indigo-200 flex items-center justify-center text-indigo-700 shrink-0">
+                        <Network className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <h4 className="text-xs font-bold text-slate-900">
+                            Server Out-of-Band IPMI / BMC Access Verification
+                          </h4>
+                          {hardwareForm.accessStatus?.status === 'success' ? (
+                            <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-semibold text-[10px] flex items-center gap-1">
+                              <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                              IPMI Verified
+                            </span>
+                          ) : hardwareForm.accessStatus?.status === 'failed' ? (
+                            <span className="px-2 py-0.5 rounded-full bg-red-100 text-red-800 font-semibold text-[10px] flex items-center gap-1">
+                              <XCircle className="w-3 h-3 text-red-600" />
+                              Auth Failed
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 font-medium text-[10px]">
+                              Untested
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[11px] text-slate-500">
+                          Verify Out-of-Band connectivity and BMC credentials before automated ESXi bare-metal provisioning.
+                        </p>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      id="btn-test-ipmi-access"
+                      onClick={handleTestIpmi}
+                      disabled={!hardwareForm.bmcIp?.trim() || internalTesting || hardwareForm.isTestingIpmi}
+                      className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 active:bg-indigo-800 disabled:bg-slate-300 disabled:cursor-not-allowed text-white text-xs font-semibold shadow-xs transition-colors shrink-0"
+                    >
+                      {internalTesting || hardwareForm.isTestingIpmi ? (
+                        <>
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                          <span>Testing IPMI Access...</span>
+                        </>
+                      ) : (
+                        <>
+                          <ShieldCheck className="w-3.5 h-3.5" />
+                          <span>Test IPMI Access (IP + Credentials)</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  {/* Inputs Grid: IP, Port/Protocol, Username, Password */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+                    <div>
+                      <label className="block text-slate-700 font-medium mb-1">
+                        IPMI / BMC Management IP <span className="text-red-500">*</span>
+                      </label>
                       <input
                         type="text"
-                        value={hardwareForm.model}
-                        onChange={e => setHardwareForm(p => ({ ...p, model: e.target.value }))}
-                        placeholder="Or type model..."
-                        className="w-40 text-xs rounded-lg border-slate-300 p-2.5 bg-white"
+                        id="input-bmc-ip"
+                        value={hardwareForm.bmcIp}
+                        onChange={e => setHardwareForm((p: any) => ({ ...p, bmcIp: e.target.value }))}
+                        placeholder="e.g. 192.168.10.120"
+                        className="w-full text-xs font-mono rounded-lg border-slate-300 p-2.5 bg-slate-50/50 focus:bg-white transition-colors"
                       />
+                    </div>
+
+                    <div>
+                      <label className="block text-slate-700 font-medium mb-1">
+                        Protocol & Port
+                      </label>
+                      <div className="flex gap-1.5">
+                        <select
+                          id="select-bmc-protocol"
+                          value={hardwareForm.bmcProtocol || 'redfish'}
+                          onChange={e => {
+                            const proto = e.target.value as 'redfish' | 'ipmi';
+                            setHardwareForm((p: any) => ({
+                              ...p,
+                              bmcProtocol: proto,
+                              bmcPort: proto === 'ipmi' ? 623 : 443
+                            }));
+                          }}
+                          className="flex-1 text-xs rounded-lg border-slate-300 p-2.5 bg-slate-50/50 focus:bg-white"
+                        >
+                          <option value="redfish">Redfish (HTTPS)</option>
+                          <option value="ipmi">IPMI 2.0 (RMCP+)</option>
+                        </select>
+                        <input
+                          type="number"
+                          id="input-bmc-port"
+                          value={hardwareForm.bmcPort || (hardwareForm.bmcProtocol === 'ipmi' ? 623 : 443)}
+                          onChange={e => setHardwareForm((p: any) => ({ ...p, bmcPort: parseInt(e.target.value, 10) || 443 }))}
+                          className="w-16 text-xs font-mono rounded-lg border-slate-300 p-2.5 bg-slate-50/50 focus:bg-white text-center"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label className="block text-slate-700 font-medium mb-1">
+                        IPMI Username
+                      </label>
+                      <input
+                        type="text"
+                        id="input-bmc-username"
+                        value={hardwareForm.bmcUsername ?? 'root'}
+                        onChange={e => setHardwareForm((p: any) => ({ ...p, bmcUsername: e.target.value }))}
+                        placeholder="e.g. root or ADMIN"
+                        className="w-full text-xs font-mono rounded-lg border-slate-300 p-2.5 bg-slate-50/50 focus:bg-white"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-slate-700 font-medium mb-1">
+                        IPMI Password
+                      </label>
+                      <div className="relative">
+                        <input
+                          type={showBmcPassword ? 'text' : 'password'}
+                          id="input-bmc-password"
+                          value={hardwareForm.bmcPassword ?? ''}
+                          onChange={e => setHardwareForm((p: any) => ({ ...p, bmcPassword: e.target.value }))}
+                          placeholder="BMC password..."
+                          className="w-full text-xs font-mono rounded-lg border-slate-300 p-2.5 pr-8 bg-slate-50/50 focus:bg-white"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowBmcPassword(!showBmcPassword)}
+                          className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600"
+                          title={showBmcPassword ? "Hide password" : "Show password"}
+                        >
+                          {showBmcPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                        </button>
+                      </div>
                     </div>
                   </div>
 
-                  <div>
-                    <label className="block text-xs font-semibold text-slate-800 mb-1">
-                      Target BMC Management IP (iDRAC / XCC)
-                    </label>
-                    <input
-                      type="text"
-                      id="input-bmc-ip"
-                      value={hardwareForm.bmcIp}
-                      onChange={e => setHardwareForm(p => ({ ...p, bmcIp: e.target.value }))}
-                      placeholder="e.g. 192.168.10.120"
-                      className="w-full text-xs font-mono rounded-lg border-slate-300 p-2.5 bg-white"
-                    />
-                  </div>
+                  {/* Interactive Test Progress / Result Banner */}
+                  {(internalTesting || hardwareForm.isTestingIpmi) && (
+                    <div className="p-3 bg-indigo-50/90 border border-indigo-200 rounded-lg space-y-2">
+                      <div className="flex items-center gap-2 text-indigo-950 font-semibold text-xs">
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin text-indigo-600" />
+                        <span>Running IPMI 2.0 / Redfish Connectivity & Credential Handshake...</span>
+                      </div>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
+                        <div className="p-2 rounded bg-white border border-indigo-100 flex items-center gap-1.5 text-indigo-900 font-medium shadow-2xs">
+                          <span className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse"></span>
+                          <span>1. TCP Route Probe</span>
+                        </div>
+                        <div className="p-2 rounded bg-white border border-indigo-100 flex items-center gap-1.5 text-indigo-900 font-medium shadow-2xs">
+                          <span className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse"></span>
+                          <span>2. Port Handshake</span>
+                        </div>
+                        <div className="p-2 rounded bg-white border border-indigo-100 flex items-center gap-1.5 text-indigo-900 font-medium shadow-2xs">
+                          <span className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse"></span>
+                          <span>3. Credentials Auth</span>
+                        </div>
+                        <div className="p-2 rounded bg-white border border-indigo-100 flex items-center gap-1.5 text-indigo-900 font-medium shadow-2xs">
+                          <span className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse"></span>
+                          <span>4. Chassis Discovery</span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Success Result */}
+                  {!internalTesting && !hardwareForm.isTestingIpmi && hardwareForm.accessStatus?.status === 'success' && (
+                    <div className="p-3.5 bg-emerald-50 border border-emerald-200 rounded-lg space-y-2">
+                      <div className="flex items-start justify-between">
+                        <div className="flex items-center gap-2 text-emerald-950 font-bold text-xs">
+                          <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                          <span>IPMI Access & Credentials Verified</span>
+                          <span className="px-1.5 py-0.5 rounded bg-emerald-100 border border-emerald-300 text-emerald-800 text-[10px] font-mono">
+                            {hardwareForm.accessStatus.latencyMs || 15}ms RTT
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={handleTestIpmi}
+                          className="text-[11px] text-emerald-700 hover:text-emerald-900 font-semibold underline cursor-pointer"
+                        >
+                          Re-test Access
+                        </button>
+                      </div>
+                      <p className="text-[11px] text-emerald-800">
+                        {hardwareForm.accessStatus.summary || `Authenticated to ${hardwareForm.bmcIp}:${hardwareForm.bmcPort || 443} as "${hardwareForm.bmcUsername || 'root'}"`}
+                      </p>
+                      {hardwareForm.accessStatus.discoveredHardware && (
+                        <div className="flex flex-wrap gap-2 pt-1">
+                          <span className="px-2 py-0.5 rounded bg-white border border-emerald-200 text-emerald-900 text-[10px] font-mono font-medium">
+                            Model: {hardwareForm.accessStatus.discoveredHardware.model || hardwareForm.model}
+                          </span>
+                          <span className="px-2 py-0.5 rounded bg-white border border-emerald-200 text-emerald-900 text-[10px] font-mono font-medium">
+                            Chassis Power: {(hardwareForm.accessStatus.discoveredHardware.powerState || 'ON').toUpperCase()}
+                          </span>
+                          <span className="px-2 py-0.5 rounded bg-white border border-emerald-200 text-emerald-900 text-[10px] font-mono font-medium">
+                            Serial: {hardwareForm.accessStatus.discoveredHardware.serialNumber || 'SN-VERIFIED'}
+                          </span>
+                          <span className="px-2 py-0.5 rounded bg-white border border-emerald-200 text-emerald-900 text-[10px] font-mono font-medium">
+                            Firmware: {hardwareForm.accessStatus.discoveredHardware.bmcVersionDetected || 'Active'}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Failure Result */}
+                  {!internalTesting && !hardwareForm.isTestingIpmi && hardwareForm.accessStatus?.status === 'failed' && (
+                    <div className="p-3.5 bg-red-50 border border-red-200 rounded-lg space-y-2">
+                      <div className="flex items-start justify-between">
+                        <div className="flex items-center gap-2 text-red-950 font-bold text-xs">
+                          <XCircle className="w-4 h-4 text-red-600 shrink-0" />
+                          <span>IPMI Access Test Failed</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={handleTestIpmi}
+                          className="text-[11px] text-red-700 hover:text-red-900 font-semibold underline cursor-pointer"
+                        >
+                          Retry Test
+                        </button>
+                      </div>
+                      <p className="text-[11px] text-red-800">
+                        {hardwareForm.accessStatus.summary || 'Failed to authenticate to target IPMI. Please verify IP address and credentials.'}
+                      </p>
+                      {hardwareForm.accessStatus.errorDetails && (
+                        <div className="text-[10px] font-mono bg-white p-2 rounded border border-red-200 text-red-700">
+                          {hardwareForm.accessStatus.errorDetails}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 {/* Orchestrator Configuration Details */}
@@ -1407,43 +1821,92 @@ export const BaremetalWizardView: React.FC<BaremetalWizardViewProps> = ({
                     ) : (
                       <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
                     )}
-                    <span>{isStep4Valid ? `BMC Reachable: ${hardwareForm.bmcIp}:443` : 'BMC IP / Model Pending'}</span>
+                    <span>{isStep4Valid ? `Hardware: ${hardwareForm.model}` : 'Hardware Model Pending'}</span>
+                  </div>
+
+                  <div className={`flex items-center justify-between p-2 rounded-lg border sm:col-span-2 ${
+                    hardwareForm.accessStatus?.status === 'success'
+                      ? 'bg-emerald-50/60 border-emerald-200/80 text-slate-800'
+                      : hardwareForm.accessStatus?.status === 'failed'
+                      ? 'bg-red-50 border-red-200 text-red-900'
+                      : 'bg-amber-50 border-amber-200 text-amber-900'
+                  }`}>
+                    <div className="flex items-center gap-2 text-xs">
+                      {hardwareForm.accessStatus?.status === 'success' ? (
+                        <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                      ) : hardwareForm.accessStatus?.status === 'failed' ? (
+                        <XCircle className="w-4 h-4 text-red-600 shrink-0" />
+                      ) : (
+                        <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                      )}
+                      <span>
+                        {hardwareForm.accessStatus?.status === 'success'
+                          ? `IPMI Access & Credentials Verified: ${hardwareForm.bmcIp}:${hardwareForm.bmcPort || 443} (${hardwareForm.accessStatus.latencyMs || 15}ms RTT • User: "${hardwareForm.bmcUsername || 'root'}")`
+                          : hardwareForm.accessStatus?.status === 'failed'
+                          ? `IPMI Access Failed on ${hardwareForm.bmcIp}: ${hardwareForm.accessStatus.summary}`
+                          : `IPMI Access Untested on ${hardwareForm.bmcIp || '<No IP>'}`}
+                      </span>
+                    </div>
+
+                    <button
+                      type="button"
+                      id="btn-step5-test-ipmi"
+                      onClick={handleTestIpmi}
+                      disabled={!hardwareForm.bmcIp?.trim() || internalTesting || hardwareForm.isTestingIpmi}
+                      className="text-[11px] font-bold px-2.5 py-1 rounded bg-white border border-slate-300 hover:bg-slate-50 text-slate-800 flex items-center gap-1.5 shrink-0 shadow-2xs cursor-pointer"
+                    >
+                      {internalTesting || hardwareForm.isTestingIpmi ? (
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin text-indigo-600" />
+                      ) : (
+                        <ShieldCheck className="w-3.5 h-3.5 text-indigo-600" />
+                      )}
+                      <span>{hardwareForm.accessStatus?.status === 'success' ? 'Re-test IPMI' : 'Test IPMI Access (IP + Credentials)'}</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Target Server IPMI Review Box */}
+                <div className="bg-slate-50/90 rounded-xl border border-slate-200 p-4 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Network className="w-4 h-4 text-indigo-600" />
+                      <span className="text-xs font-bold text-slate-800">Target Server IPMI / BMC Access Summary</span>
+                    </div>
+                    {hardwareForm.accessStatus?.status === 'success' ? (
+                      <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 text-[10px] font-bold flex items-center gap-1">
+                        <CheckCircle2 className="w-3 h-3" />
+                        Credentials Authenticated
+                      </span>
+                    ) : (
+                      <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 text-[10px] font-bold flex items-center gap-1">
+                        <AlertTriangle className="w-3 h-3" />
+                        Preflight Verification Advised
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs pt-1">
+                    <div className="bg-white p-2 rounded border border-slate-200">
+                      <div className="text-[10px] text-slate-500 font-semibold">BMC IP & Port</div>
+                      <div className="font-mono font-bold text-slate-800">{hardwareForm.bmcIp || 'N/A'}:{hardwareForm.bmcPort || (hardwareForm.bmcProtocol === 'ipmi' ? 623 : 443)}</div>
+                    </div>
+                    <div className="bg-white p-2 rounded border border-slate-200">
+                      <div className="text-[10px] text-slate-500 font-semibold">Protocol</div>
+                      <div className="font-bold text-slate-800">{(hardwareForm.bmcProtocol || 'redfish').toUpperCase()}</div>
+                    </div>
+                    <div className="bg-white p-2 rounded border border-slate-200">
+                      <div className="text-[10px] text-slate-500 font-semibold">Username</div>
+                      <div className="font-mono font-bold text-slate-800">{hardwareForm.bmcUsername || 'root'}</div>
+                    </div>
+                    <div className="bg-white p-2 rounded border border-slate-200">
+                      <div className="text-[10px] text-slate-500 font-semibold">Password</div>
+                      <div className="font-mono text-slate-800">{hardwareForm.bmcPassword ? '••••••••' : '(Default / None)'}</div>
+                    </div>
                   </div>
                 </div>
               </div>
             </div>
           )}
-
-          {/* DEDICATED OUTPUT FOR EACH STEP */}
-          <BaremetalStepOutputs
-            step={wizardStep}
-            data={{
-              ritmNumber,
-              ritmRequester,
-              ritmEnvironment,
-              esxiName,
-              hostIp,
-              hostMask,
-              vmotionIp,
-              vmotionMask,
-              dnsIps: selectedDnsIps,
-              gatewayIp,
-              vlanId,
-              selectedIso: {
-                fileName: activeIso.fileName,
-                version: activeIso.version,
-                build: activeIso.build,
-                sizeMb: activeIso.sizeMb,
-                sha256: activeIso.sha256,
-                oemAddon: activeIso.oemAddon
-              },
-              selectedVendor,
-              hardwareModel: hardwareForm.model,
-              bmcIp: hardwareForm.bmcIp,
-              templateName: selectedVendor === 'DELL' ? dellConfig.templateName : lenovoConfig.configPatternName,
-              targetBootDevice: selectedVendor === 'DELL' ? dellConfig.targetBootDevice : lenovoConfig.targetBootDevice
-            }}
-          />
 
           {/* STEP NAVIGATION BUTTONS */}
           <div className="flex items-center justify-between pt-4 border-t border-slate-200">
