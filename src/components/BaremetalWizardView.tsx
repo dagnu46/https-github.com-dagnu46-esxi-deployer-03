@@ -35,7 +35,10 @@ import {
   Key,
   ShieldAlert,
   AlertCircle,
-  Sparkles
+  Sparkles,
+  Terminal,
+  Code,
+  Cookie
 } from 'lucide-react';
 import {
   BaremetalVendor,
@@ -60,6 +63,7 @@ import {
 import { testServerAccess } from '../utils/accessTester';
 import { BaremetalWorkflowVisualizer } from './BaremetalWorkflowVisualizer';
 import { ServiceNowCredentialsPromptModal } from './ServiceNowCredentialsPromptModal';
+import { ServiceNowGrabModal } from './ServiceNowGrabModal';
 import {
   fetchDatabaseServiceNowCredentials,
   saveDatabaseServiceNowCredentials,
@@ -180,8 +184,8 @@ export const BaremetalWizardView: React.FC<BaremetalWizardViewProps> = ({
   const [dbCredentials, setDbCredentials] = useState<ServiceNowCredentials | null>(null);
   const [loadingDbCreds, setLoadingDbCreds] = useState(true);
   const [credInstanceUrl, setCredInstanceUrl] = useState('https://generali.service-now.com');
-  const [credUsername, setCredUsername] = useState('svc_vcenter_baremetal');
-  const [credPassword, setCredPassword] = useState('');
+  const [credUsername, setCredUsername] = useState('b305glp');
+  const [credPassword, setCredPassword] = useState('s47bnLrD');
   const [showCredPassword, setShowCredPassword] = useState(false);
   const [isSavingCreds, setIsSavingCreds] = useState(false);
   const [isTestingCreds, setIsTestingCreds] = useState(false);
@@ -278,9 +282,45 @@ export const BaremetalWizardView: React.FC<BaremetalWizardViewProps> = ({
   };
 
   // RITM Fetcher state (Real ServiceNow API - Nothing in Sandbox)
+  const [snApiMethod, setSnApiMethod] = useState<'table_api' | 'jsonv2'>('jsonv2'); // Method 3 default (.do?JSONv2 direct export)
   const [isFetchingRitm, setIsFetchingRitm] = useState(false);
   const [ritmFetchError, setRitmFetchError] = useState<string | null>(null);
   const [retrievedRitmData, setRetrievedRitmData] = useState<ServiceNowRitmData | null>(null);
+  const [showRawJson, setShowRawJson] = useState(false);
+  const [copiedCurl, setCopiedCurl] = useState(false);
+  const [showPasteModal, setShowPasteModal] = useState(false);
+  const [showGrabModal, setShowGrabModal] = useState(false);
+  const [pastedTicketContent, setPastedTicketContent] = useState('');
+  const [isParsingPasted, setIsParsingPasted] = useState(false);
+
+  const handleParsePastedTicket = async () => {
+    if (!pastedTicketContent.trim()) return;
+    setIsParsingPasted(true);
+    setRitmFetchError(null);
+    try {
+      const cleanRitm = ritmNumber.trim().toUpperCase() || 'RITM001508091';
+      const data = await fetchServiceNowRitm(cleanRitm, {
+        instanceUrl: credInstanceUrl.trim(),
+        username: credUsername.trim(),
+        password: credPassword,
+        apiMethod: snApiMethod,
+        rawPayload: pastedTicketContent
+      });
+      setRetrievedRitmData(data);
+      handleApplyServiceNowFields(data.extractedFields, data);
+      setShowPasteModal(false);
+      logBaremetalOutput(
+        'SERVICENOW',
+        'success',
+        `Parsed ServiceNow Ticket variables from Web Page / Source: ${data.number}`,
+        `Host: ${data.extractedFields?.hostname || 'N/A'} | IP: ${data.extractedFields?.managementIp || 'N/A'} | Mask: ${data.extractedFields?.managementMask || '255.255.255.0'}`
+      );
+    } catch (err: any) {
+      setRitmFetchError('Failed to parse pasted text: ' + (err.message || String(err)));
+    } finally {
+      setIsParsingPasted(false);
+    }
+  };
 
   const handleGetInfoFromServiceNow = async () => {
     const cleanRitm = ritmNumber.trim().toUpperCase();
@@ -291,10 +331,11 @@ export const BaremetalWizardView: React.FC<BaremetalWizardViewProps> = ({
 
     setIsFetchingRitm(true);
     setRitmFetchError(null);
+    const methodName = snApiMethod === 'jsonv2' ? 'Method 3 (Direct .do?JSONv2 export)' : 'Method 1 (Table REST API)';
     logBaremetalOutput(
       'SERVICENOW',
       'info',
-      `Querying ServiceNow Table API for ticket [${cleanRitm}]...`,
+      `Querying ServiceNow for ticket [${cleanRitm}] via ${methodName}...`,
       `Target: ${credInstanceUrl} | Login: ${credUsername || 'anonymous'}`
     );
 
@@ -302,7 +343,8 @@ export const BaremetalWizardView: React.FC<BaremetalWizardViewProps> = ({
       const data = await fetchServiceNowRitm(cleanRitm, {
         instanceUrl: credInstanceUrl.trim(),
         username: credUsername.trim(),
-        password: credPassword
+        password: credPassword,
+        apiMethod: snApiMethod
       });
 
       setRetrievedRitmData(data);
@@ -311,7 +353,7 @@ export const BaremetalWizardView: React.FC<BaremetalWizardViewProps> = ({
       logBaremetalOutput(
         'SERVICENOW',
         'success',
-        `Real ServiceNow Ticket Retrieved: ${data.number}`,
+        `Real ServiceNow Ticket Retrieved (${methodName}): ${data.number}`,
         `State: ${data.state} | Requester: ${data.requester} | Host: ${data.extractedFields?.hostname || 'N/A'} | Management IP: ${data.extractedFields?.managementIp || 'N/A'}`
       );
     } catch (err: any) {
@@ -321,7 +363,7 @@ export const BaremetalWizardView: React.FC<BaremetalWizardViewProps> = ({
       logBaremetalOutput(
         'SERVICENOW',
         'error',
-        `ServiceNow Query Failed for [${cleanRitm}]`,
+        `ServiceNow Query Failed (${methodName}) for [${cleanRitm}]`,
         msg
       );
     } finally {
@@ -332,17 +374,19 @@ export const BaremetalWizardView: React.FC<BaremetalWizardViewProps> = ({
   const handleRealTestConnection = async () => {
     setIsTestingCreds(true);
     setCredTestFeedback(null);
+    const methodName = snApiMethod === 'jsonv2' ? 'Method 3 (.do?JSONv2)' : 'Method 1 (Table API)';
     logBaremetalOutput(
       'SERVICENOW',
       'info',
-      `Executing real test connection to ${credInstanceUrl}...`,
+      `Executing real test connection via ${methodName} to ${credInstanceUrl}...`,
       `Login: ${credUsername || 'anonymous'}`
     );
     try {
       const res = await testServiceNowConnection({
         instanceUrl: credInstanceUrl.trim(),
         username: credUsername.trim(),
-        password: credPassword
+        password: credPassword,
+        apiMethod: snApiMethod
       });
       setCredTestFeedback({
         success: res.success,
@@ -352,14 +396,14 @@ export const BaremetalWizardView: React.FC<BaremetalWizardViewProps> = ({
         'SERVICENOW',
         res.success ? 'success' : 'warn',
         res.message,
-        `Latency: ${res.latencyMs || 0}ms | Instance: ${res.instanceUrl}`
+        `Latency: ${res.latencyMs || 0}ms | Instance: ${res.instanceUrl} | Method: ${methodName}`
       );
     } catch (err: any) {
       setCredTestFeedback({
         success: false,
         message: err.message || 'Real connection test failed'
       });
-      logBaremetalOutput('SERVICENOW', 'error', `Real connection test error: ${err.message}`);
+      logBaremetalOutput('SERVICENOW', 'error', `Real connection test error (${methodName}): ${err.message}`);
     } finally {
       setIsTestingCreds(false);
     }
@@ -794,8 +838,12 @@ export const BaremetalWizardView: React.FC<BaremetalWizardViewProps> = ({
                     <div>
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-bold text-base text-white">RITM fetcher</span>
-                        <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-400/30 font-mono font-medium">
-                          Real ServiceNow Table API
+                        <span className={`inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full font-mono font-medium ${
+                          snApiMethod === 'jsonv2'
+                            ? 'bg-emerald-500/25 text-emerald-300 border border-emerald-400/40'
+                            : 'bg-indigo-500/20 text-indigo-300 border border-indigo-400/30'
+                        }`}>
+                          {snApiMethod === 'jsonv2' ? 'Active: Method 3 (.do?JSONv2)' : 'Active: Method 1 (Table API)'}
                         </span>
                         {dbCredentials?.storedInDb ? (
                           <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-400/40 font-mono font-medium">
@@ -808,7 +856,7 @@ export const BaremetalWizardView: React.FC<BaremetalWizardViewProps> = ({
                         )}
                       </div>
                       <p className="text-xs text-slate-300 mt-0.5">
-                        Fetch live ServiceNow Request Item authorization, extract host configuration parameters, and run real connection checks.
+                        Retrieve multiple fields into an RITM without custom ServiceNow scripts or Scripted REST APIs.
                       </p>
                     </div>
                   </div>
@@ -823,6 +871,81 @@ export const BaremetalWizardView: React.FC<BaremetalWizardViewProps> = ({
                     >
                       <Key className="w-3.5 h-3.5 text-indigo-400" />
                       <span>DB Config</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* API Method Selector Tabs (Method 3 vs Method 1) */}
+                <div className="bg-slate-950/60 p-3 rounded-lg border border-slate-800 space-y-2">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <span className="text-[11px] font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+                      <Sliders className="w-3.5 h-3.5 text-indigo-400" />
+                      <span>Select ServiceNow Query Method (0% script required):</span>
+                    </span>
+
+                    {/* Method Toggle Buttons */}
+                    <div className="inline-flex p-0.5 rounded-lg bg-slate-900 border border-slate-700/80">
+                      <button
+                        type="button"
+                        id="btn-method-jsonv2"
+                        onClick={() => {
+                          setSnApiMethod('jsonv2');
+                          if (ritmFetchError) setRitmFetchError(null);
+                        }}
+                        className={`px-3 py-1 text-xs font-semibold rounded-md transition-all flex items-center gap-1.5 cursor-pointer ${
+                          snApiMethod === 'jsonv2'
+                            ? 'bg-indigo-600 text-white shadow-xs'
+                            : 'text-slate-400 hover:text-slate-200'
+                        }`}
+                      >
+                        <Sparkles className="w-3 h-3 text-emerald-300" />
+                        <span>Method 3: Direct .do?JSONv2</span>
+                      </button>
+                      <button
+                        type="button"
+                        id="btn-method-table-api"
+                        onClick={() => {
+                          setSnApiMethod('table_api');
+                          if (ritmFetchError) setRitmFetchError(null);
+                        }}
+                        className={`px-3 py-1 text-xs font-semibold rounded-md transition-all flex items-center gap-1.5 cursor-pointer ${
+                          snApiMethod === 'table_api'
+                            ? 'bg-indigo-600 text-white shadow-xs'
+                            : 'text-slate-400 hover:text-slate-200'
+                        }`}
+                      >
+                        <span>Method 1: Table REST API</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Contextual helper for selected method */}
+                  <div className="text-[11px] text-slate-300 flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-slate-900/70 px-3 py-2 rounded border border-slate-800/80 font-mono">
+                    <div className="flex items-center gap-2 truncate">
+                      <span className="text-emerald-400 font-bold">GET</span>
+                      <span className="text-slate-200 truncate">
+                        {snApiMethod === 'jsonv2'
+                          ? `/sc_req_item.do?JSONv2&sysparm_query=number=${ritmNumber || 'RITM0012345'}&displayvalue=all`
+                          : `/api/now/table/sc_req_item?sysparm_query=number=${ritmNumber || 'RITM0012345'}&sysparm_display_value=all`}
+                      </span>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const targetUrl = snApiMethod === 'jsonv2'
+                          ? `${credInstanceUrl.replace(/\/+$/, '')}/sc_req_item.do?JSONv2&sysparm_query=number=${ritmNumber || 'RITM0012345'}&displayvalue=all`
+                          : `${credInstanceUrl.replace(/\/+$/, '')}/api/now/table/sc_req_item?sysparm_query=number=${ritmNumber || 'RITM0012345'}&sysparm_display_value=all`;
+                        const curlCmd = `curl -u "${credUsername || 'username'}:${credPassword ? '********' : 'password'}" "${targetUrl}"`;
+                        navigator.clipboard.writeText(curlCmd);
+                        setCopiedCurl(true);
+                        setTimeout(() => setCopiedCurl(false), 2500);
+                      }}
+                      className="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-[10px] font-sans flex items-center gap-1 border border-slate-700 shrink-0 cursor-pointer"
+                      title="Copy curl command to test in command line or terminal"
+                    >
+                      {copiedCurl ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3 text-slate-400" />}
+                      <span>{copiedCurl ? 'cURL copied!' : 'Copy cURL Command'}</span>
                     </button>
                   </div>
                 </div>
@@ -921,14 +1044,14 @@ export const BaremetalWizardView: React.FC<BaremetalWizardViewProps> = ({
                     />
                   </div>
                   <span className="text-[10px] text-slate-400 italic">
-                    Strict real mode: directly calls ServiceNow Table API (sc_req_item / sc_item_option_mtom).
+                    Strict real mode: testing live {snApiMethod === 'jsonv2' ? 'Method 3 (.do?JSONv2)' : 'Table API'}. No sandbox mock data.
                   </span>
                 </div>
 
                 {/* Action Buttons: Get informations from ServiceNow & Real Test Connection & Store into DB */}
                 <div className="flex flex-wrap items-center justify-between gap-2.5 pt-2 border-t border-slate-800">
                   <div className="flex flex-wrap items-center gap-2.5">
-                    {/* BUTTON 1: Get informations from ServiceNow */}
+                    {/* BUTTON 1: Get informations from ServiceNow (uses selected method) */}
                     <button
                       type="button"
                       id="btn-get-info-servicenow"
@@ -939,9 +1062,15 @@ export const BaremetalWizardView: React.FC<BaremetalWizardViewProps> = ({
                       {isFetchingRitm ? (
                         <RefreshCw className="w-4 h-4 animate-spin text-white" />
                       ) : (
-                        <Sparkles className="w-4 h-4 text-indigo-200" />
+                        <Sparkles className="w-4 h-4 text-emerald-300" />
                       )}
-                      <span>{isFetchingRitm ? 'Fetching from ServiceNow...' : 'Get informations from ServiceNow'}</span>
+                      <span>
+                        {isFetchingRitm
+                          ? `Querying ServiceNow via ${snApiMethod === 'jsonv2' ? 'Method 3' : 'Table API'}...`
+                          : snApiMethod === 'jsonv2'
+                            ? 'Test Method 3 (.do?JSONv2)'
+                            : 'Get informations from ServiceNow'}
+                      </span>
                     </button>
 
                     {/* BUTTON 2: Real Test Connection */}
@@ -975,6 +1104,30 @@ export const BaremetalWizardView: React.FC<BaremetalWizardViewProps> = ({
                         <Database className="w-3.5 h-3.5 text-slate-400" />
                       )}
                       <span>{isSavingCreds ? 'Saving to DB...' : 'Store credentials into Database'}</span>
+                    </button>
+
+                    {/* Button 4: Parse Web Page or Ticket HTML directly */}
+                    <button
+                      type="button"
+                      id="btn-open-paste-html-modal"
+                      onClick={() => setShowPasteModal(true)}
+                      className="px-3.5 py-2 rounded-lg bg-indigo-950/80 hover:bg-indigo-900 border border-indigo-500/50 text-indigo-200 hover:text-white font-semibold text-xs flex items-center gap-1.5 transition-colors cursor-pointer"
+                      title="Paste page HTML or text directly to parse variables without API restrictions"
+                    >
+                      <Code className="w-3.5 h-3.5 text-indigo-400" />
+                      <span>Parse Web Page / HTML</span>
+                    </button>
+
+                    {/* Button 5: ServiceNow Grab via glide_user_route & JSESSIONID */}
+                    <button
+                      type="button"
+                      id="btn-open-sn-grab-modal-wizard"
+                      onClick={() => setShowGrabModal(true)}
+                      className="px-3.5 py-2 rounded-lg bg-emerald-950/80 hover:bg-emerald-900 border border-emerald-500/60 text-emerald-200 hover:text-white font-bold text-xs flex items-center gap-1.5 transition-all cursor-pointer shadow-xs"
+                      title="ServiceNow Grab: Fill glide_user_route & JSESSIONID cookies to retrieve ticket content"
+                    >
+                      <Cookie className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>ServiceNow Grab</span>
                     </button>
                   </div>
 
@@ -1031,12 +1184,25 @@ export const BaremetalWizardView: React.FC<BaremetalWizardViewProps> = ({
                         <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-900/60 text-indigo-300 border border-indigo-700/50">
                           Stage: {retrievedRitmData.stage}
                         </span>
+                        <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-900/50 text-emerald-300 border border-emerald-700/50 font-mono">
+                          {retrievedRitmData.apiMethod === 'jsonv2' ? 'Method 3: .do?JSONv2' : 'Method 1: Table API'}
+                        </span>
                       </div>
 
-                      <span className="text-[11px] text-emerald-300 flex items-center gap-1 font-semibold">
-                        <CheckCircle2 className="w-3.5 h-3.5" />
-                        Live Table API Result Loaded
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setShowRawJson(!showRawJson)}
+                          className="px-2.5 py-1 rounded bg-slate-700/80 hover:bg-slate-700 text-slate-200 text-xs font-medium flex items-center gap-1 border border-slate-600 transition-colors cursor-pointer"
+                        >
+                          <Code className="w-3.5 h-3.5 text-indigo-400" />
+                          <span>{showRawJson ? 'Hide Raw JSON' : 'Inspect Raw JSON'}</span>
+                        </button>
+                        <span className="text-[11px] text-emerald-300 flex items-center gap-1 font-semibold">
+                          <CheckCircle2 className="w-3.5 h-3.5" />
+                          Loaded Live
+                        </span>
+                      </div>
                     </div>
 
                     <div className="text-xs text-slate-200">
@@ -1071,6 +1237,24 @@ export const BaremetalWizardView: React.FC<BaremetalWizardViewProps> = ({
                       </div>
                     </div>
 
+                    {/* Raw JSON inspection viewer */}
+                    {showRawJson && (
+                      <div className="mt-3 p-3 rounded-lg bg-slate-950 border border-slate-700/80 font-mono text-[11px] space-y-2 animate-in fade-in duration-150">
+                        <div className="flex items-center justify-between border-b border-slate-800 pb-1.5 text-slate-400">
+                          <span className="flex items-center gap-1.5 text-xs text-indigo-300 font-semibold">
+                            <Terminal className="w-3.5 h-3.5" />
+                            Raw ServiceNow JSON Response:
+                          </span>
+                          <span className="text-[10px] text-slate-400">
+                            {retrievedRitmData.requestUrl}
+                          </span>
+                        </div>
+                        <pre className="max-h-64 overflow-y-auto overflow-x-auto text-emerald-400 text-[10.5px] p-2 bg-slate-900/80 rounded">
+                          {JSON.stringify(retrievedRitmData.rawFields, null, 2)}
+                        </pre>
+                      </div>
+                    )}
+
                     <div className="flex items-center justify-between pt-1">
                       <span className="text-[11px] text-slate-400">
                         All extracted parameters have been mapped into Step 2 (Network) and Step 4 (BMC).
@@ -1082,6 +1266,64 @@ export const BaremetalWizardView: React.FC<BaremetalWizardViewProps> = ({
                       >
                         Re-apply Parameters
                       </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Paste HTML / Web Page Content Modal */}
+                {showPasteModal && (
+                  <div className="p-4 rounded-xl bg-slate-900 border-2 border-indigo-500/80 text-white space-y-3 animate-in fade-in duration-150 shadow-2xl">
+                    <div className="flex items-center justify-between border-b border-slate-700/80 pb-2">
+                      <div className="flex items-center gap-2">
+                        <Code className="w-4 h-4 text-indigo-400" />
+                        <span className="text-xs font-bold text-white uppercase tracking-wider">
+                          Parse ServiceNow Web Page / HTML / Form Text
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setShowPasteModal(false)}
+                        className="text-slate-400 hover:text-white text-xs font-bold px-2 py-0.5 rounded bg-slate-800 cursor-pointer"
+                      >
+                        Close
+                      </button>
+                    </div>
+
+                    <p className="text-[11px] text-slate-300">
+                      Copy the HTML or text directly from your browser when viewing <span className="font-mono text-indigo-300 font-bold">RITM001508091</span> (e.g. right-click &gt; View Page Source, or Ctrl+A &gt; Copy).
+                      The engine will parse all catalog variables (Hostname, Management IP, Subnet Mask, Gateway, vMotion IP, IPMI BMC) with zero API authentication blocks.
+                    </p>
+
+                    <textarea
+                      value={pastedTicketContent}
+                      onChange={e => setPastedTicketContent(e.target.value)}
+                      placeholder="Paste ServiceNow webpage HTML or copied ticket text here..."
+                      rows={6}
+                      className="w-full text-[11px] font-mono rounded-lg bg-slate-950 border border-slate-700 p-2.5 text-emerald-300 placeholder-slate-600 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-400"
+                    />
+
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] text-slate-400 font-mono">
+                        {pastedTicketContent.length > 0 ? `${pastedTicketContent.length} characters pasted` : 'Ready for input'}
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setPastedTicketContent('')}
+                          className="px-3 py-1.5 rounded text-xs text-slate-400 hover:text-white bg-slate-800 cursor-pointer"
+                        >
+                          Clear
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleParsePastedTicket}
+                          disabled={isParsingPasted || !pastedTicketContent.trim()}
+                          className="px-4 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center gap-1.5 disabled:opacity-50 cursor-pointer shadow-md"
+                        >
+                          {isParsingPasted ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                          <span>Extract &amp; Populate Wizard</span>
+                        </button>
+                      </div>
                     </div>
                   </div>
                 )}
@@ -2574,6 +2816,19 @@ export const BaremetalWizardView: React.FC<BaremetalWizardViewProps> = ({
               type: 'success',
               text: 'ServiceNow credentials successfully stored in PostgreSQL database!'
             });
+          }}
+        />
+      )}
+
+      {/* ServiceNow Grab Modal via glide_user_route & JSESSIONID */}
+      {showGrabModal && (
+        <ServiceNowGrabModal
+          isOpen={showGrabModal}
+          onClose={() => setShowGrabModal(false)}
+          onApplyToWizard={(data) => {
+            setRetrievedRitmData(data);
+            handleApplyServiceNowFields(data.extractedFields, data);
+            setShowGrabModal(false);
           }}
         />
       )}

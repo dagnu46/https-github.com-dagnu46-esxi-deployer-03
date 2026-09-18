@@ -18,6 +18,7 @@ import { EditCampaignModal } from './components/EditCampaignModal';
 import { MainPageFirmwareUploadPanel } from './components/MainPageFirmwareUploadPanel';
 import { BaremetalEsxiDeployView } from './components/BaremetalEsxiDeployView';
 import { VersionManagerModal } from './components/VersionManagerModal';
+import { ServiceNowGrabModal } from './components/ServiceNowGrabModal';
 import { getStoredEsxiIsos } from './services/esxiIsoService';
 import { exportFleetToCsv, exportFleetToJson } from './utils/exportUtils';
 
@@ -137,6 +138,9 @@ export default function App() {
     setVersionManagerInitialTab(tab);
     setIsVersionManagerOpen(true);
   };
+
+  // ServiceNow Grab Modal State
+  const [isServiceNowGrabOpen, setIsServiceNowGrabOpen] = useState(false);
 
   // Wizard pre-fills
   const [wizardPreSelectedServers, setWizardPreSelectedServers] = useState<string[]>([]);
@@ -922,6 +926,7 @@ export default function App() {
         onOpenVmwareIsoTester={() => handleOpenVmwareIsoTester()}
         onOpenExportModal={() => handleOpenExportModal('fleet')}
         onOpenVersionManager={() => handleOpenVersionManager('firmware')}
+        onOpenServiceNowGrab={() => setIsServiceNowGrabOpen(true)}
         totalPackages={packages.length}
         totalIsos={getStoredEsxiIsos().length}
       />
@@ -1308,6 +1313,16 @@ export default function App() {
         }}
         onShowToast={showToast}
         initialTab={versionManagerInitialTab}
+      />
+
+      {/* Top Page "ServiceNow Grab" Modal */}
+      <ServiceNowGrabModal
+        isOpen={isServiceNowGrabOpen}
+        onClose={() => setIsServiceNowGrabOpen(false)}
+        onApplyToWizard={ritmData => {
+          setActiveTab('baremetal');
+          showToast(`Applied ServiceNow ticket ${ritmData.number} to Baremetal Deployment!`, 'success');
+        }}
       />
     </div>
   );

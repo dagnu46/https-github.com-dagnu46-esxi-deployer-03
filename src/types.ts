@@ -630,6 +630,8 @@ export interface ServiceNowRitmData {
   allVariables: Record<string, { label: string; value: any; displayValue?: string }>;
   rawFields?: Record<string, any>;
   source: 'live_api' | 'cached' | 'simulated';
+  apiMethod?: 'table_api' | 'jsonv2';
+  requestUrl?: string;
   instanceUrl: string;
   fetchedAt: string;
   error?: string;

@@ -14,7 +14,8 @@ import {
   Trash2,
   Disc,
   Download,
-  Sliders
+  Sliders,
+  Cookie
 } from 'lucide-react';
 import { UpgradeCampaign } from '../types';
 import { DatabaseStatus } from '../services/api';
@@ -35,6 +36,7 @@ interface HeaderProps {
   onOpenVmwareIsoTester?: () => void;
   onOpenExportModal?: () => void;
   onOpenVersionManager?: () => void;
+  onOpenServiceNowGrab?: () => void;
   totalPackages?: number;
   totalIsos?: number;
 }
@@ -53,6 +55,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenVmwareIsoTester,
   onOpenExportModal,
   onOpenVersionManager,
+  onOpenServiceNowGrab,
   totalPackages = 0,
   totalIsos = 0,
 }) => {
@@ -166,6 +169,19 @@ export const Header: React.FC<HeaderProps> = ({
                 <span className="text-[10px] font-mono px-1.5 py-0.2 rounded-full bg-indigo-200/70 text-indigo-900 font-bold">
                   {totalPackages + totalIsos}
                 </span>
+              </button>
+            )}
+
+            {onOpenServiceNowGrab && (
+              <button
+                type="button"
+                id="btn-header-servicenow-grab"
+                onClick={onOpenServiceNowGrab}
+                title="ServiceNow Grab: Retrieve RITM content by filling glide_user_route & JSESSIONID"
+                className="px-3 py-1.5 rounded-lg text-xs font-bold bg-emerald-50 text-emerald-800 hover:bg-emerald-100 border border-emerald-300 transition-all flex items-center gap-1.5 shadow-2xs hover:shadow-xs cursor-pointer"
+              >
+                <Cookie className="w-3.5 h-3.5 text-emerald-600" />
+                <span>ServiceNow Grab</span>
               </button>
             )}
 

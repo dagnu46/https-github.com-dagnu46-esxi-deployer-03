@@ -93,7 +93,7 @@ export const BaremetalEsxiDeployView: React.FC<BaremetalEsxiDeployViewProps> = (
 
   // Form Fields as requested:
   // 1. RITM #
-  const [ritmNumber, setRitmNumber] = useState<string>('');
+  const [ritmNumber, setRitmNumber] = useState<string>('RITM001508091');
   // 2. Form: ESXi Name, IP address (+ mask), vMotion Address (+ mask), DNS IP: fix list ("8.8.8.8", "10.100.1.1")
   const [esxiName, setEsxiName] = useState<string>('');
   const [hostIp, setHostIp] = useState<string>('');

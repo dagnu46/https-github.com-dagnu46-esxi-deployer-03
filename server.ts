@@ -3618,10 +3618,16 @@ async function startServer() {
       const instanceUrl = req.body?.instanceUrl || dbCreds.instanceUrl || process.env.SERVICENOW_INSTANCE_URL || 'https://generali.service-now.com';
       const username = req.body?.username !== undefined && req.body?.username !== '' ? req.body.username : (dbCreds.username || process.env.SERVICENOW_USERNAME || '');
       const password = req.body?.password !== undefined && req.body?.password !== '' ? req.body.password : (dbCreds.password || process.env.SERVICENOW_PASSWORD || '');
+      const apiMethod = req.body?.apiMethod === 'jsonv2' ? 'jsonv2' : 'table_api';
 
       const startTime = Date.now();
       const authHeader = username && password ? ('Basic ' + Buffer.from(`${username}:${password}`).toString('base64')) : '';
-      const testUrl = `${instanceUrl.replace(/\/+$/, '')}/api/now/table/sc_req_item?sysparm_limit=1`;
+      
+      // Method 3 uses the direct export endpoint /sc_req_item.do?JSONv2
+      // Method 1 uses the standard Table REST API /api/now/table/sc_req_item
+      const testUrl = apiMethod === 'jsonv2'
+        ? `${instanceUrl.replace(/\/+$/, '')}/sc_req_item.do?JSONv2&sysparm_record_count=1`
+        : `${instanceUrl.replace(/\/+$/, '')}/api/now/table/sc_req_item?sysparm_limit=1`;
 
       const headers: Record<string, string> = {
         'Accept': 'application/json',
@@ -3640,13 +3646,16 @@ async function startServer() {
 
         const latency = Date.now() - startTime;
         if (fetchRes.ok) {
+          const methodName = apiMethod === 'jsonv2' ? 'Method 3 (Direct .do?JSONv2)' : 'Method 1 (Table REST API)';
           return res.json({
             success: true,
             status: 'connected',
-            message: `Real connection verified: Authenticated to ServiceNow (${instanceUrl}) as ${username}`,
+            message: `Real connection verified via ${methodName}: Authenticated to ServiceNow (${instanceUrl}) as ${username}`,
             latencyMs: latency,
             instanceUrl,
-            username
+            username,
+            apiMethod,
+            testUrl
           });
         }
 
@@ -3657,7 +3666,9 @@ async function startServer() {
             message: `ServiceNow Authentication Rejected (HTTP ${fetchRes.status}) for user "${username}". Check login and password.`,
             latencyMs: latency,
             instanceUrl,
-            username
+            username,
+            apiMethod,
+            testUrl
           });
         }
 
@@ -3667,7 +3678,9 @@ async function startServer() {
           message: `ServiceNow instance returned HTTP ${fetchRes.status} (${fetchRes.statusText})`,
           latencyMs: latency,
           instanceUrl,
-          username
+          username,
+          apiMethod,
+          testUrl
         });
       } catch (networkErr: any) {
         const latency = Date.now() - startTime;
@@ -3677,7 +3690,9 @@ async function startServer() {
           message: `Real Connection Failed: Unable to reach ServiceNow at ${instanceUrl} (${networkErr.message})`,
           latencyMs: latency,
           instanceUrl,
-          username
+          username,
+          apiMethod,
+          testUrl
         });
       }
     } catch (e: any) {
@@ -3693,59 +3708,130 @@ async function startServer() {
         return res.status(400).json({ success: false, error: 'RITM number is required' });
       }
 
+      // Check if user sent raw HTML/Text/JSON directly to parse
+      const rawPayload = req.body?.rawPayload;
+      if (rawPayload && typeof rawPayload === 'string' && rawPayload.trim().length > 0) {
+        const { parseServiceNowHtml } = await import('./server/htmlParser');
+        const parsed = parseServiceNowHtml(rawPayload, ritmNumber);
+        return res.json(parsed);
+      }
+
       const dbCreds = await getServiceNowCredentials();
       const instanceUrl = req.body?.instanceUrl || dbCreds.instanceUrl || process.env.SERVICENOW_INSTANCE_URL || 'https://generali.service-now.com';
       const username = req.body?.username !== undefined && req.body?.username !== '' ? req.body.username : (dbCreds.username || process.env.SERVICENOW_USERNAME || '');
       const password = req.body?.password !== undefined && req.body?.password !== '' ? req.body.password : (dbCreds.password || process.env.SERVICENOW_PASSWORD || '');
+      const apiMethod = req.body?.apiMethod === 'jsonv2' ? 'jsonv2' : 'table_api';
+      const glideUserRoute = req.body?.glideUserRoute?.trim();
+      const jsessionId = req.body?.jsessionId?.trim();
 
       const authHeader = username && password ? ('Basic ' + Buffer.from(`${username}:${password}`).toString('base64')) : '';
-      const tableUrl = `${instanceUrl.replace(/\/+$/, '')}/api/now/table/sc_req_item?sysparm_query=number=${encodeURIComponent(ritmNumber)}^ORsys_id=${encodeURIComponent(ritmNumber)}&sysparm_display_value=all`;
+      
+      // Determine query URL based on selected method:
+      // Method 1: Table REST API (/api/now/table/sc_req_item)
+      // Method 3: Direct URL Export processor (/sc_req_item.do?JSONv2)
+      const queryUrl = apiMethod === 'jsonv2'
+        ? `${instanceUrl.replace(/\/+$/, '')}/sc_req_item.do?JSONv2&sysparm_query=number=${encodeURIComponent(ritmNumber)}^ORsys_id=${encodeURIComponent(ritmNumber)}&displayvalue=all`
+        : `${instanceUrl.replace(/\/+$/, '')}/api/now/table/sc_req_item?sysparm_query=number=${encodeURIComponent(ritmNumber)}^ORsys_id=${encodeURIComponent(ritmNumber)}&sysparm_display_value=all`;
 
       const headers: Record<string, string> = {
-        'Accept': 'application/json',
-        'User-Agent': 'vCenter-Orchestrator/1.0'
+        'Accept': 'application/json, text/html, */*',
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36'
       };
       if (authHeader) {
         headers['Authorization'] = authHeader;
       }
+      if (glideUserRoute || jsessionId) {
+        const cookieParts: string[] = [];
+        if (glideUserRoute) cookieParts.push(`glide_user_route=${glideUserRoute}`);
+        if (jsessionId) cookieParts.push(`JSESSIONID=${jsessionId}`);
+        headers['Cookie'] = cookieParts.join('; ');
+      }
 
       let fetchRes: Response;
       try {
-        fetchRes = await fetch(tableUrl, {
+        fetchRes = await fetch(queryUrl, {
           method: 'GET',
           headers,
-          signal: AbortSignal.timeout(7000)
+          signal: AbortSignal.timeout(8000)
         });
       } catch (fetchErr: any) {
         return res.status(502).json({
           success: false,
-          error: `Real connection failed to ServiceNow (${instanceUrl}): ${fetchErr.message}. Ensure instance URL is accessible.`
+          error: `Real connection failed to ServiceNow (${instanceUrl}) using ${apiMethod === 'jsonv2' ? 'Method 3 (.do?JSONv2)' : 'Table API'}: ${fetchErr.message}. Ensure instance URL is accessible.`
         });
       }
 
+      const contentType = fetchRes.headers.get('content-type') || '';
+
+      // If response is HTML (even if 200, 302, 401, or 403 like login/redirect portal page)
+      if (contentType.includes('text/html') || contentType.includes('application/xhtml')) {
+        const htmlText = await fetchRes.text();
+        const { parseServiceNowHtml } = await import('./server/htmlParser');
+        const parsed = parseServiceNowHtml(htmlText, ritmNumber);
+        
+        // If parsed contained meaningful variables or ticket info
+        if (parsed.extractedFields?.hostname || parsed.extractedFields?.managementIp || parsed.number) {
+          return res.json({
+            ...parsed,
+            requestUrl: queryUrl,
+            apiMethod
+          });
+        }
+      }
+
       if (fetchRes.status === 401 || fetchRes.status === 403) {
+        const errorDetail = (glideUserRoute || jsessionId)
+          ? `ServiceNow session authentication failed (HTTP ${fetchRes.status}). The provided session cookies (glide_user_route / JSESSIONID) may have expired. You can also paste the page HTML directly via the 'Parse Web Page / HTML' button.`
+          : `ServiceNow Authentication Failed (HTTP ${fetchRes.status}) for user "${username}". Please verify your login, password, or provide session cookies.`;
         return res.status(fetchRes.status).json({
           success: false,
-          error: `ServiceNow Authentication Failed (HTTP ${fetchRes.status}) for user "${username}". Please verify your login and password.`
+          error: errorDetail
         });
       }
 
       if (!fetchRes.ok) {
         return res.status(fetchRes.status).json({
           success: false,
-          error: `ServiceNow API returned HTTP ${fetchRes.status} (${fetchRes.statusText})`
+          error: `ServiceNow API returned HTTP ${fetchRes.status} (${fetchRes.statusText}) on ${queryUrl}`
+        });
+      }
+
+      if (contentType.includes('text/html')) {
+        const htmlText = await fetchRes.text();
+        const { parseServiceNowHtml } = await import('./server/htmlParser');
+        const parsed = parseServiceNowHtml(htmlText, ritmNumber);
+        return res.json({
+          ...parsed,
+          requestUrl: queryUrl,
+          apiMethod
         });
       }
 
       const body = await fetchRes.json();
-      if (!body?.result || !Array.isArray(body.result) || body.result.length === 0) {
-        return res.status(404).json({
-          success: false,
-          error: `No ServiceNow record found for RITM "${ritmNumber}" in instance ${instanceUrl}.`
-        });
+      let raw: any = null;
+
+      if (apiMethod === 'jsonv2') {
+        // Method 3 returns { "records": [ ... ] }
+        if (!body?.records || !Array.isArray(body.records) || body.records.length === 0) {
+          return res.status(404).json({
+            success: false,
+            error: `No ServiceNow record found for RITM "${ritmNumber}" in instance ${instanceUrl} using Method 3 (.do?JSONv2).`,
+            requestUrl: queryUrl
+          });
+        }
+        raw = body.records[0];
+      } else {
+        // Method 1 returns { "result": [ ... ] }
+        if (!body?.result || !Array.isArray(body.result) || body.result.length === 0) {
+          return res.status(404).json({
+            success: false,
+            error: `No ServiceNow record found for RITM "${ritmNumber}" in instance ${instanceUrl} using Table API.`,
+            requestUrl: queryUrl
+          });
+        }
+        raw = body.result[0];
       }
 
-      const raw = body.result[0];
       const getVal = (field: any) => {
         if (!field) return '';
         if (typeof field === 'string') return field;
@@ -3760,8 +3846,40 @@ async function startServer() {
       const requester = getVal(raw.request) || getVal(raw.opened_by) || getVal(raw.requested_for) || username;
       const sysId = getVal(raw.sys_id);
 
-      // Extract variables if available
-      const vars = raw.variables || {};
+      // Extract variables if available directly on the record
+      let vars: Record<string, any> = raw.variables || {};
+
+      // If variables are not directly on the record (common in Method 3 JSONv2),
+      // query the M2M variable options table using the same method (0 scripts required)
+      if (Object.keys(vars).length === 0 && (sysId || ritmNumber)) {
+        try {
+          const varQuery = sysId ? `request_item=${sysId}` : `request_item.number=${encodeURIComponent(ritmNumber)}`;
+          const varUrl = apiMethod === 'jsonv2'
+            ? `${instanceUrl.replace(/\/+$/, '')}/sc_item_option_mtom.do?JSONv2&sysparm_query=${varQuery}&displayvalue=all`
+            : `${instanceUrl.replace(/\/+$/, '')}/api/now/table/sc_item_option_mtom?sysparm_query=${varQuery}&sysparm_display_value=all`;
+
+          const varRes = await fetch(varUrl, {
+            method: 'GET',
+            headers,
+            signal: AbortSignal.timeout(5000)
+          });
+
+          if (varRes.ok) {
+            const varBody = await varRes.json();
+            const varItems = apiMethod === 'jsonv2' ? (varBody.records || []) : (varBody.result || []);
+            for (const item of varItems) {
+              const opt = item.sc_item_option || item;
+              const name = getVal(opt.item_option_new) || getVal(item.item_option_new) || '';
+              const val = getVal(opt.value) || getVal(item.value) || '';
+              if (name && val) {
+                vars[name] = { label: name, value: val, displayValue: val };
+              }
+            }
+          }
+        } catch {
+          // non-blocking
+        }
+      }
       const hostname = getVal(vars.hostname) || getVal(vars.server_name) || getVal(raw.cmdb_ci);
       const managementIp = getVal(vars.ip_address) || getVal(vars.management_ip) || getVal(vars.ip);
       const managementMask = getVal(vars.subnet_mask) || getVal(vars.management_mask) || '255.255.255.0';
@@ -3808,6 +3926,8 @@ async function startServer() {
         allVariables: vars,
         rawFields: raw,
         source: 'live_api' as const,
+        apiMethod,
+        requestUrl: queryUrl,
         instanceUrl,
         fetchedAt: new Date().toISOString()
       };

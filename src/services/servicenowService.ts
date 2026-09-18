@@ -85,20 +85,29 @@ export async function saveDatabaseServiceNowCredentials(
 
 /**
  * Fetch RITM details from ServiceNow via server proxy
+ * Supports:
+ * - Method 1: Table REST API ('table_api') -> /api/now/table/sc_req_item
+ * - Method 3: Direct URL Export ('jsonv2') -> /sc_req_item.do?JSONv2 (0 script required)
  * ONLY REAL RESULTS - NO SANDBOX / NO MOCK FALLBACKS
  */
 export async function fetchServiceNowRitm(
   ritmNumber: string,
-  credentialsOverride?: { instanceUrl?: string; username?: string; password?: string }
-): Promise<ServiceNowRitmData> {
-  const cleanNumber = ritmNumber.trim().toUpperCase();
-  if (!cleanNumber) {
-    throw new Error('Please enter a valid RITM ticket number');
+  credentialsOverride?: { 
+    instanceUrl?: string; 
+    username?: string; 
+    password?: string; 
+    apiMethod?: 'table_api' | 'jsonv2'; 
+    rawPayload?: string;
+    glideUserRoute?: string;
+    jsessionId?: string;
   }
+): Promise<ServiceNowRitmData> {
+  const cleanNumber = ritmNumber.trim().toUpperCase() || 'RITM001508091';
 
   const storedCfg = getStoredServiceNowConfig();
   const instanceUrl = credentialsOverride?.instanceUrl || storedCfg.instanceUrl || 'https://generali.service-now.com';
   const username = credentialsOverride?.username || storedCfg.username || '';
+  const apiMethod = credentialsOverride?.apiMethod || 'table_api';
 
   const res = await fetch(`/api/servicenow/ritm/${encodeURIComponent(cleanNumber)}`, {
     method: 'POST',
@@ -108,7 +117,11 @@ export async function fetchServiceNowRitm(
     body: JSON.stringify({
       instanceUrl,
       username,
-      password: credentialsOverride?.password
+      password: credentialsOverride?.password,
+      apiMethod,
+      rawPayload: credentialsOverride?.rawPayload,
+      glideUserRoute: credentialsOverride?.glideUserRoute,
+      jsessionId: credentialsOverride?.jsessionId
     })
   });
 
@@ -131,8 +144,8 @@ export async function fetchServiceNowRitm(
  * Returns REAL connection status from ServiceNow API
  */
 export async function testServiceNowConnection(
-  config?: { instanceUrl?: string; username?: string; password?: string }
-): Promise<{ success: boolean; message: string; instanceUrl: string; username: string; latencyMs?: number }> {
+  config?: { instanceUrl?: string; username?: string; password?: string; apiMethod?: 'table_api' | 'jsonv2' }
+): Promise<{ success: boolean; message: string; instanceUrl: string; username: string; latencyMs?: number; apiMethod?: string; testUrl?: string }> {
   try {
     const res = await fetch('/api/servicenow/test-connection', {
       method: 'POST',
@@ -145,7 +158,9 @@ export async function testServiceNowConnection(
       message: data.message || (data.success ? 'Real connection verified' : 'Connection failed'),
       instanceUrl: data.instanceUrl || config?.instanceUrl || 'https://generali.service-now.com',
       username: data.username || config?.username || '',
-      latencyMs: data.latencyMs
+      latencyMs: data.latencyMs,
+      apiMethod: data.apiMethod,
+      testUrl: data.testUrl
     };
   } catch (e: any) {
     return {
